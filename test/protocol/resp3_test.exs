@@ -1,7 +1,7 @@
-defmodule RedisEx.Protocol.RESP3Test do
+defmodule Redis.Protocol.RESP3Test do
   use ExUnit.Case, async: true
 
-  alias RedisEx.Protocol.RESP3
+  alias Redis.Protocol.RESP3
 
   describe "encode/1" do
     test "encodes a simple command" do
@@ -34,7 +34,7 @@ defmodule RedisEx.Protocol.RESP3Test do
     end
 
     test "simple error" do
-      assert {:ok, %RedisEx.Error{message: "ERR unknown"}, ""} =
+      assert {:ok, %Redis.Error{message: "ERR unknown"}, ""} =
                RESP3.decode("-ERR unknown\r\n")
     end
 
@@ -78,7 +78,7 @@ defmodule RedisEx.Protocol.RESP3Test do
     end
 
     test "blob error" do
-      assert {:ok, %RedisEx.Error{message: "ERR this is an error"}, ""} =
+      assert {:ok, %Redis.Error{message: "ERR this is an error"}, ""} =
                RESP3.decode("!20\r\nERR this is an error\r\n")
     end
 

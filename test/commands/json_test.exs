@@ -1,7 +1,7 @@
-defmodule RedisEx.Commands.JSONTest do
+defmodule Redis.Commands.JSONTest do
   use ExUnit.Case, async: true
 
-  alias RedisEx.Commands.JSON
+  alias Redis.Commands.JSON
 
   describe "core" do
     test "SET with map" do

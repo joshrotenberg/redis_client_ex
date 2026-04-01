@@ -1,7 +1,7 @@
-defmodule RedisEx.URITest do
+defmodule Redis.URITest do
   use ExUnit.Case, async: true
 
-  alias RedisEx.URI, as: RURI
+  alias Redis.URI, as: RURI
 
   describe "parse/1" do
     test "basic host:port" do

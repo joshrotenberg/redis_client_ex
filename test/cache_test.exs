@@ -1,9 +1,9 @@
-defmodule RedisEx.CacheTest do
+defmodule Redis.CacheTest do
   use ExUnit.Case, async: false
 
-  alias RedisEx.Cache
-  alias RedisEx.Cache.Store
-  alias RedisEx.Connection
+  alias Redis.Cache
+  alias Redis.Cache.Store
+  alias Redis.Connection
 
   # Uses redis-server on port 6398 (no auth) from test_helper.exs
 

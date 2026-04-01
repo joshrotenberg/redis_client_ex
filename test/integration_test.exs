@@ -1,11 +1,11 @@
-defmodule RedisEx.IntegrationTest do
+defmodule Redis.IntegrationTest do
   use ExUnit.Case, async: false
 
-  alias RedisEx.Connection
-  alias RedisEx.Connection.Pool
-  alias RedisEx.PubSub
-  alias RedisEx.Cache
-  alias RedisEx.Resilience
+  alias Redis.Connection
+  alias Redis.Connection.Pool
+  alias Redis.PubSub
+  alias Redis.Cache
+  alias Redis.Resilience
 
   @moduletag timeout: 60_000
 
@@ -249,13 +249,13 @@ defmodule RedisEx.IntegrationTest do
       {:ok, conn} = Connection.start_link(port: 6459)
 
       {:ok, cb} =
-        RedisEx.Resilience.CircuitBreaker.start_link(
+        Redis.Resilience.CircuitBreaker.start_link(
           conn: conn,
           failure_threshold: 3,
           reset_timeout: 2_000
         )
 
-      assert {:ok, "PONG"} = RedisEx.Resilience.CircuitBreaker.command(cb, ["PING"])
+      assert {:ok, "PONG"} = Redis.Resilience.CircuitBreaker.command(cb, ["PING"])
 
       # Kill the server to cause failures
       RedisServerWrapper.Server.stop(srv)
@@ -263,14 +263,14 @@ defmodule RedisEx.IntegrationTest do
 
       # Trigger failures to trip the breaker
       for _ <- 1..5 do
-        RedisEx.Resilience.CircuitBreaker.command(cb, ["PING"])
+        Redis.Resilience.CircuitBreaker.command(cb, ["PING"])
       end
 
-      state = RedisEx.Resilience.CircuitBreaker.state(cb)
+      state = Redis.Resilience.CircuitBreaker.state(cb)
       assert state.state == :open
 
       # Open circuit should fail fast
-      assert {:error, :circuit_open} = RedisEx.Resilience.CircuitBreaker.command(cb, ["PING"])
+      assert {:error, :circuit_open} = Redis.Resilience.CircuitBreaker.command(cb, ["PING"])
 
       # Restart server and wait for half-open
       {:ok, _srv2} = RedisServerWrapper.Server.start_link(port: 6459)
@@ -279,7 +279,7 @@ defmodule RedisEx.IntegrationTest do
       # The connection needs to reconnect too
       Process.sleep(1000)
 
-      RedisEx.Resilience.CircuitBreaker.stop(cb)
+      Redis.Resilience.CircuitBreaker.stop(cb)
       Connection.stop(conn)
       Process.sleep(500)
     end

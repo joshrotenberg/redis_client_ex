@@ -1,8 +1,8 @@
-defmodule RedisEx.ScriptTest do
+defmodule Redis.ScriptTest do
   use ExUnit.Case, async: false
 
-  alias RedisEx.Script
-  alias RedisEx.Connection
+  alias Redis.Script
+  alias Redis.Connection
 
   # Uses redis-server on port 6398 from test_helper.exs
 
@@ -67,7 +67,7 @@ defmodule RedisEx.ScriptTest do
 
     test "returns script errors", %{conn: conn} do
       script = Script.new("return redis.call('INVALID_COMMAND')")
-      assert {:error, %RedisEx.Error{}} = Script.eval(conn, script)
+      assert {:error, %Redis.Error{}} = Script.eval(conn, script)
     end
   end
 

@@ -1,9 +1,9 @@
-defmodule RedisEx.MixProject do
+defmodule Redis.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :redis_ex,
+      app: :redis,
       version: "0.1.0",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
@@ -15,7 +15,7 @@ defmodule RedisEx.MixProject do
   def application do
     [
       extra_applications: [:logger, :ssl],
-      mod: {RedisEx.Application, []}
+      mod: {Redis.Application, []}
     ]
   end
 

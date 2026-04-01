@@ -1,8 +1,8 @@
-defmodule RedisEx.ClusterTest do
+defmodule Redis.ClusterTest do
   use ExUnit.Case, async: false
 
-  alias RedisEx.Cluster
-  alias RedisEx.Cluster.Router
+  alias Redis.Cluster
+  alias Redis.Cluster.Router
 
   @moduletag timeout: 60_000
 

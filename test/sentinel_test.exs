@@ -1,7 +1,7 @@
-defmodule RedisEx.SentinelTest do
+defmodule Redis.SentinelTest do
   use ExUnit.Case, async: false
 
-  alias RedisEx.Sentinel
+  alias Redis.Sentinel
 
   @moduletag timeout: 60_000
 

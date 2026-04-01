@@ -1,7 +1,7 @@
-defmodule RedisEx.Cluster.RouterTest do
+defmodule Redis.Cluster.RouterTest do
   use ExUnit.Case, async: true
 
-  alias RedisEx.Cluster.Router
+  alias Redis.Cluster.Router
 
   describe "slot/1" do
     test "returns a slot in range 0-16383" do

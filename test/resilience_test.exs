@@ -1,9 +1,9 @@
-defmodule RedisEx.ResilienceTest do
+defmodule Redis.ResilienceTest do
   use ExUnit.Case, async: false
 
-  alias RedisEx.Connection
-  alias RedisEx.Resilience
-  alias RedisEx.Resilience.{CircuitBreaker, Retry, Coalesce, Bulkhead}
+  alias Redis.Connection
+  alias Redis.Resilience
+  alias Redis.Resilience.{CircuitBreaker, Retry, Coalesce, Bulkhead}
 
   # Uses redis-server on port 6398 from test_helper.exs
 
@@ -48,7 +48,7 @@ defmodule RedisEx.ResilienceTest do
       {:ok, retried} = Retry.start_link(conn: conn, max_attempts: 3)
 
       # INCR on a string produces a Redis error, not a connection error
-      assert {:error, %RedisEx.Error{}} = Retry.command(retried, ["INCR", "str"])
+      assert {:error, %Redis.Error{}} = Retry.command(retried, ["INCR", "str"])
 
       Retry.stop(retried)
       Connection.stop(conn)

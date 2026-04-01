@@ -1,7 +1,7 @@
-defmodule RedisEx.ConnectionTest do
+defmodule Redis.ConnectionTest do
   use ExUnit.Case, async: false
 
-  alias RedisEx.Connection
+  alias Redis.Connection
 
   # Uses redis-server started in test_helper.exs on port 6398 (no auth)
   # and port 6399 (password: "testpass")
@@ -107,7 +107,7 @@ defmodule RedisEx.ConnectionTest do
 
     test "error response", %{conn: conn} do
       Connection.command(conn, ["SET", "mykey", "notanumber"])
-      assert {:error, %RedisEx.Error{}} = Connection.command(conn, ["INCR", "mykey"])
+      assert {:error, %Redis.Error{}} = Connection.command(conn, ["INCR", "mykey"])
     end
 
     test "binary-safe values", %{conn: conn} do

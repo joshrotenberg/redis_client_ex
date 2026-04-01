@@ -1,7 +1,7 @@
-defmodule RedisEx.NoreplyTest do
+defmodule Redis.NoreplyTest do
   use ExUnit.Case, async: false
 
-  alias RedisEx.Connection
+  alias Redis.Connection
 
   # Uses redis-server on port 6398 from test_helper.exs
 

@@ -1,7 +1,7 @@
-defmodule RedisEx.Connection.PoolTest do
+defmodule Redis.Connection.PoolTest do
   use ExUnit.Case, async: false
 
-  alias RedisEx.Connection.Pool
+  alias Redis.Connection.Pool
 
   # Uses redis-server on port 6398 from test_helper.exs
 

@@ -1,4 +1,4 @@
-# RedisEx Design Document
+# Redis Design Document
 
 A modern, full-featured Redis client for Elixir built on OTP principles.
 
@@ -17,7 +17,7 @@ A modern, full-featured Redis client for Elixir built on OTP principles.
 ## Architecture
 
 ```
-RedisEx (top-level API)
+Redis (top-level API)
 ├── Protocol
 │   ├── RESP3        — encoder/decoder for RESP3 wire format
 │   └── RESP2        — encoder/decoder for RESP2 (fallback)
@@ -64,7 +64,7 @@ RESP3 type mapping:
 |-----------------|-----------------------------|
 | Simple string   | `String.t()`               |
 | Blob string     | `String.t()`               |
-| Simple error    | `%RedisEx.Error{}`         |
+| Simple error    | `%Redis.Error{}`         |
 | Number          | `integer()`                |
 | Double          | `float()`                  |
 | Boolean         | `boolean()`                |
@@ -94,20 +94,20 @@ Thin builder modules that return `[String.t()]` command lists.
 No connection logic. Each module covers a Redis command group.
 
 ```elixir
-RedisEx.Commands.String.set("key", "value", ex: 60)
+Redis.Commands.String.set("key", "value", ex: 60)
 # => ["SET", "key", "value", "EX", "60"]
 
-RedisEx.Commands.Hash.hgetall("myhash")
+Redis.Commands.Hash.hgetall("myhash")
 # => ["HGETALL", "myhash"]
 ```
 
-The top-level `RedisEx` module provides the ergonomic API that
+The top-level `Redis` module provides the ergonomic API that
 combines command building with execution:
 
 ```elixir
-RedisEx.command(conn, ["GET", "key"])             # raw
-RedisEx.get(conn, "key")                          # typed
-RedisEx.hgetall(conn, "myhash")                   # => %{"k" => "v"}
+Redis.command(conn, ["GET", "key"])             # raw
+Redis.get(conn, "key")                          # typed
+Redis.hgetall(conn, "myhash")                   # => %{"k" => "v"}
 ```
 
 ### Pipeline
@@ -115,7 +115,7 @@ RedisEx.hgetall(conn, "myhash")                   # => %{"k" => "v"}
 Collects multiple commands and sends them in a single write.
 
 ```elixir
-RedisEx.pipeline(conn, [
+Redis.pipeline(conn, [
   ["SET", "a", "1"],
   ["SET", "b", "2"],
   ["MGET", "a", "b"]
@@ -128,9 +128,9 @@ RedisEx.pipeline(conn, [
 MULTI/EXEC with optional WATCH for optimistic locking.
 
 ```elixir
-RedisEx.transaction(conn, fn tx ->
-  RedisEx.tx_command(tx, ["INCR", "counter"])
-  RedisEx.tx_command(tx, ["GET", "counter"])
+Redis.transaction(conn, fn tx ->
+  Redis.tx_command(tx, ["INCR", "counter"])
+  Redis.tx_command(tx, ["GET", "counter"])
 end)
 # => {:ok, [1, "1"]}
 ```
@@ -146,12 +146,12 @@ The cluster layer manages topology and routes commands to the correct node.
 - **Multi-key commands**: validates all keys hash to same slot, or errors
 
 ```elixir
-{:ok, cluster} = RedisEx.Cluster.start_link(
+{:ok, cluster} = Redis.Cluster.start_link(
   nodes: ["redis://node1:7000", "redis://node2:7001"],
   pool_size: 5
 )
 
-RedisEx.Cluster.command(cluster, ["GET", "mykey"])
+Redis.Cluster.command(cluster, ["GET", "mykey"])
 # Routes to correct node based on CRC16 hash slot
 ```
 
@@ -161,14 +161,14 @@ Queries sentinels to resolve master/replica addresses. Subscribes to
 `+switch-master` for automatic failover handling.
 
 ```elixir
-{:ok, conn} = RedisEx.Sentinel.start_link(
+{:ok, conn} = Redis.Sentinel.start_link(
   sentinels: ["sentinel1:26379", "sentinel2:26379"],
   group: "mymaster",
   role: :primary
 )
 
 # Works like a normal connection — failover is transparent
-RedisEx.command(conn, ["SET", "key", "value"])
+Redis.command(conn, ["SET", "key", "value"])
 ```
 
 ### PubSub
@@ -177,8 +177,8 @@ Dedicated connection(s) for pub/sub. Subscribers are Elixir processes
 that receive messages via standard `send/2`.
 
 ```elixir
-{:ok, pubsub} = RedisEx.PubSub.start_link(conn_opts)
-:ok = RedisEx.PubSub.subscribe(pubsub, "mychannel", self())
+{:ok, pubsub} = Redis.PubSub.start_link(conn_opts)
+:ok = Redis.PubSub.subscribe(pubsub, "mychannel", self())
 
 receive do
   {:redis_pubsub, :message, "mychannel", payload} ->
@@ -192,13 +192,13 @@ RESP3 client tracking + ETS for local caching of read commands.
 Redis pushes invalidation messages when cached keys change.
 
 ```elixir
-{:ok, conn} = RedisEx.start_link(cache: true)
+{:ok, conn} = Redis.start_link(cache: true)
 
 # First call: hits Redis, caches in ETS
-{:ok, val} = RedisEx.get(conn, "key")
+{:ok, val} = Redis.get(conn, "key")
 
 # Second call: served from ETS (no network round-trip)
-{:ok, val} = RedisEx.get(conn, "key")
+{:ok, val} = Redis.get(conn, "key")
 
 # Another client sets "key" → Redis pushes invalidation → ETS entry evicted
 ```
@@ -209,7 +209,7 @@ Phase 1 — Foundation:
 1. RESP3 encoder/decoder (pure functions, easy to test)
 2. RESP2 encoder/decoder (fallback)
 3. Connection GenServer (TCP, handshake, command/response)
-4. Basic `RedisEx.command/2` API
+4. Basic `Redis.command/2` API
 
 Phase 2 — Core Features:
 5. Pipeline support
@@ -240,7 +240,7 @@ Phase 4 — Advanced:
 
 ## Protocol Parser Strategy
 
-The pure Elixir RESP3 parser (`RedisEx.Protocol.RESP3`) is the default and has
+The pure Elixir RESP3 parser (`Redis.Protocol.RESP3`) is the default and has
 zero dependencies. For high-throughput scenarios, an optional Rustler NIF-backed
 parser can be swapped in transparently:
 
@@ -269,16 +269,16 @@ control over redis-server processes — perfect for integration tests:
 {:ok, _server} = RedisServerWrapper.Server.start_link(port: 6399)
 
 # test/connection_test.exs
-{:ok, conn} = RedisEx.start_link(port: 6399)
-{:ok, "PONG"} = RedisEx.command(conn, ["PING"])
+{:ok, conn} = Redis.start_link(port: 6399)
+{:ok, "PONG"} = Redis.command(conn, ["PING"])
 
 # Cluster tests
 {:ok, _cluster} = RedisServerWrapper.Cluster.start_link(masters: 3, base_port: 7100)
-{:ok, client} = RedisEx.Cluster.start_link(nodes: ["redis://127.0.0.1:7100"])
+{:ok, client} = Redis.Cluster.start_link(nodes: ["redis://127.0.0.1:7100"])
 
 # Sentinel tests
 {:ok, _sentinel} = RedisServerWrapper.Sentinel.start_link(master_port: 6500)
-{:ok, client} = RedisEx.Sentinel.start_link(sentinels: ["127.0.0.1:26389"], group: "mymaster")
+{:ok, client} = Redis.Sentinel.start_link(sentinels: ["127.0.0.1:26389"], group: "mymaster")
 ```
 
 Add as a path dep in mix.exs:

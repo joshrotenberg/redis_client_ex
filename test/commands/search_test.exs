@@ -1,7 +1,7 @@
-defmodule RedisEx.Commands.SearchTest do
+defmodule Redis.Commands.SearchTest do
   use ExUnit.Case, async: true
 
-  alias RedisEx.Commands.Search
+  alias Redis.Commands.Search
 
   describe "index management" do
     test "CREATE hash index with schema" do

@@ -1,8 +1,8 @@
-defmodule RedisEx.PubSub.ShardedTest do
+defmodule Redis.PubSub.ShardedTest do
   use ExUnit.Case, async: false
 
-  alias RedisEx.PubSub.Sharded
-  alias RedisEx.Connection
+  alias Redis.PubSub.Sharded
+  alias Redis.Connection
 
   @moduletag timeout: 60_000
 

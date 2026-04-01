@@ -1,7 +1,7 @@
-defmodule RedisEx.Protocol.RESP2Test do
+defmodule Redis.Protocol.RESP2Test do
   use ExUnit.Case, async: true
 
-  alias RedisEx.Protocol.RESP2
+  alias Redis.Protocol.RESP2
 
   describe "decode/1" do
     test "simple string" do
@@ -9,7 +9,7 @@ defmodule RedisEx.Protocol.RESP2Test do
     end
 
     test "error" do
-      assert {:ok, %RedisEx.Error{message: "ERR unknown"}, ""} =
+      assert {:ok, %Redis.Error{message: "ERR unknown"}, ""} =
                RESP2.decode("-ERR unknown\r\n")
     end
 

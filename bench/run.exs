@@ -1,14 +1,14 @@
-# RedisEx vs Redix Benchmark Suite
+# Redis vs Redix Benchmark Suite
 #
 # Run with: MIX_ENV=bench mix run bench/run.exs
 #
 # Requires redis-server on port 6399 (started automatically via redis_server_wrapper)
 
-alias RedisEx.Connection, as: RConn
-alias RedisEx.Connection.Pool, as: RPool
-alias RedisEx.Cache
+alias Redis.Connection, as: RConn
+alias Redis.Connection.Pool, as: RPool
+alias Redis.Cache
 
-IO.puts("\n=== RedisEx vs Redix Benchmark Suite ===\n")
+IO.puts("\n=== Redis vs Redix Benchmark Suite ===\n")
 
 # Start a redis-server for benchmarking
 {:ok, _srv} = RedisServerWrapper.Server.start_link(port: 6390, password: nil)
@@ -33,8 +33,8 @@ IO.puts("--- 1. Single Command: GET ---\n")
 
 Benchee.run(
   %{
-    "RedisEx (RESP3)" => fn -> RConn.command(redis_ex, ["GET", "bench:key"]) end,
-    "RedisEx (RESP2)" => fn -> RConn.command(redis_ex_resp2, ["GET", "bench:key"]) end,
+    "Redis (RESP3)" => fn -> RConn.command(redis_ex, ["GET", "bench:key"]) end,
+    "Redis (RESP2)" => fn -> RConn.command(redis_ex_resp2, ["GET", "bench:key"]) end,
     "Redix" => fn -> Redix.command(redix, ["GET", "bench:key"]) end
   },
   time: 5,
@@ -46,8 +46,8 @@ IO.puts("\n--- 2. Single Command: SET ---\n")
 
 Benchee.run(
   %{
-    "RedisEx (RESP3)" => fn -> RConn.command(redis_ex, ["SET", "bench:set", "val"]) end,
-    "RedisEx (RESP2)" => fn -> RConn.command(redis_ex_resp2, ["SET", "bench:set", "val"]) end,
+    "Redis (RESP3)" => fn -> RConn.command(redis_ex, ["SET", "bench:set", "val"]) end,
+    "Redis (RESP2)" => fn -> RConn.command(redis_ex_resp2, ["SET", "bench:set", "val"]) end,
     "Redix" => fn -> Redix.command(redix, ["SET", "bench:set", "val"]) end
   },
   time: 5,
@@ -66,7 +66,7 @@ IO.puts("\n--- 3. Pipeline: 10 commands ---\n")
 
 Benchee.run(
   %{
-    "RedisEx" => fn -> RConn.pipeline(redis_ex, pipeline_10) end,
+    "Redis" => fn -> RConn.pipeline(redis_ex, pipeline_10) end,
     "Redix" => fn -> Redix.pipeline(redix, pipeline_10) end
   },
   time: 5,
@@ -78,7 +78,7 @@ IO.puts("\n--- 4. Pipeline: 100 commands ---\n")
 
 Benchee.run(
   %{
-    "RedisEx" => fn -> RConn.pipeline(redis_ex, pipeline_100) end,
+    "Redis" => fn -> RConn.pipeline(redis_ex, pipeline_100) end,
     "Redix" => fn -> Redix.pipeline(redix, pipeline_100) end
   },
   time: 5,
@@ -94,8 +94,8 @@ IO.puts("\n--- 5. HGETALL (map decode, RESP3 vs RESP2) ---\n")
 
 Benchee.run(
   %{
-    "RedisEx RESP3 (native map)" => fn -> RConn.command(redis_ex, ["HGETALL", "bench:hash"]) end,
-    "RedisEx RESP2 (flat list)" => fn -> RConn.command(redis_ex_resp2, ["HGETALL", "bench:hash"]) end,
+    "Redis RESP3 (native map)" => fn -> RConn.command(redis_ex, ["HGETALL", "bench:hash"]) end,
+    "Redis RESP2 (flat list)" => fn -> RConn.command(redis_ex_resp2, ["HGETALL", "bench:hash"]) end,
     "Redix (flat list)" => fn -> Redix.command(redix, ["HGETALL", "bench:hash"]) end
   },
   time: 5,
@@ -157,8 +157,8 @@ Benchee.run(
 # 6. Pure Protocol Encode/Decode
 # ============================================================
 
-alias RedisEx.Protocol.RESP3
-alias RedisEx.Protocol.RESP2
+alias Redis.Protocol.RESP3
+alias Redis.Protocol.RESP2
 
 simple_resp3 = "+OK\r\n"
 bulk_resp3 = "$11\r\nhello world\r\n"
