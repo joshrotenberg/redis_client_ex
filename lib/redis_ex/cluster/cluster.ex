@@ -61,7 +61,10 @@ defmodule RedisEx.Cluster do
   end
 
   @doc """
-  Sends a pipeline — all commands must target the same hash slot.
+  Sends a pipeline of commands. If all commands target the same hash slot,
+  they are sent as a single pipeline. Otherwise, commands are automatically
+  split by slot, sent in parallel to the correct nodes, and results are
+  reassembled in the original command order.
   """
   @spec pipeline(GenServer.server(), [[String.t()]], keyword()) ::
           {:ok, [term()]} | {:error, term()}
@@ -142,7 +145,7 @@ defmodule RedisEx.Cluster do
         end
 
       {:error, :cross_slot} ->
-        {:reply, {:error, :cross_slot}, state}
+        {:reply, execute_split_pipeline(state, commands), state}
 
       {:error, :empty} ->
         {:reply, {:ok, []}, state}
@@ -346,6 +349,86 @@ defmodule RedisEx.Cluster do
 
   defp wrap_result(%RedisEx.Error{} = err), do: {:error, err}
   defp wrap_result(result), do: {:ok, result}
+
+  # -------------------------------------------------------------------
+  # Split pipeline execution
+  # -------------------------------------------------------------------
+
+  defp execute_split_pipeline(state, commands) do
+    # Tag each command with its original index and compute its slot
+    indexed_commands =
+      commands
+      |> Enum.with_index()
+      |> Enum.map(fn {cmd, idx} ->
+        slot = case Router.slot_for_command(cmd) do
+          {:ok, s} -> s
+          {:error, :no_key} -> :no_key
+        end
+        {idx, slot, cmd}
+      end)
+
+    # Group commands by slot, preserving order within each group
+    groups =
+      indexed_commands
+      |> Enum.group_by(fn {_idx, slot, _cmd} -> slot end)
+
+    # For key-less commands, pick any connection
+    default_conn = case any_connection(state) do
+      {:ok, conn} -> conn
+      _ -> nil
+    end
+
+    # Send each group in parallel using Task.async
+    tasks =
+      Enum.map(groups, fn {slot, entries} ->
+        conn = case slot do
+          :no_key -> default_conn
+          s ->
+            case get_connection_for_slot(state, s) do
+              {:ok, c} -> c
+              _ -> nil
+            end
+        end
+
+        indices = Enum.map(entries, fn {idx, _s, _c} -> idx end)
+        cmds = Enum.map(entries, fn {_idx, _s, c} -> c end)
+
+        Task.async(fn ->
+          if conn do
+            case Connection.pipeline(conn, cmds) do
+              {:ok, results} -> {:ok, Enum.zip(indices, results)}
+              {:error, reason} -> {:error, reason, indices}
+            end
+          else
+            {:error, :no_connection, indices}
+          end
+        end)
+      end)
+
+    # Await all tasks
+    task_results = Task.await_many(tasks, state.timeout || 5_000)
+
+    # Check for errors and reassemble
+    {pairs, errors} =
+      Enum.reduce(task_results, {[], []}, fn
+        {:ok, idx_results}, {pairs, errs} ->
+          {idx_results ++ pairs, errs}
+        {:error, reason, indices}, {pairs, errs} ->
+          {pairs, [{reason, indices} | errs]}
+      end)
+
+    if errors != [] do
+      [{reason, _} | _] = errors
+      {:error, reason}
+    else
+      results =
+        pairs
+        |> Enum.sort_by(fn {idx, _val} -> idx end)
+        |> Enum.map(fn {_idx, val} -> val end)
+
+      {:ok, results}
+    end
+  end
 
   # -------------------------------------------------------------------
   # Connection management

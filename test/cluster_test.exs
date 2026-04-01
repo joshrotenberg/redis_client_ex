@@ -114,12 +114,52 @@ defmodule RedisEx.ClusterTest do
       assert results == ["OK", "OK", "1", "2"]
     end
 
-    test "pipeline cross slot returns error", %{cluster: cluster} do
-      assert {:error, :cross_slot} =
-               Cluster.pipeline(cluster, [
-                 ["SET", "different1", "v"],
-                 ["SET", "different2", "v"]
-               ])
+    test "pipeline cross slot succeeds with auto-splitting", %{cluster: cluster} do
+      # These keys will (almost certainly) hash to different slots
+      commands = [
+        ["SET", "xslot:alpha", "a"],
+        ["SET", "xslot:beta", "b"],
+        ["SET", "xslot:gamma", "c"]
+      ]
+
+      assert {:ok, results} = Cluster.pipeline(cluster, commands)
+      assert results == ["OK", "OK", "OK"]
+
+      # Verify the values were actually written
+      assert {:ok, "a"} = Cluster.command(cluster, ["GET", "xslot:alpha"])
+      assert {:ok, "b"} = Cluster.command(cluster, ["GET", "xslot:beta"])
+      assert {:ok, "c"} = Cluster.command(cluster, ["GET", "xslot:gamma"])
+    end
+
+    test "pipeline with mixed key-less commands", %{cluster: cluster} do
+      commands = [
+        ["SET", "mixed:key1", "val1"],
+        ["PING"],
+        ["SET", "mixed:key2", "val2"],
+        ["PING"]
+      ]
+
+      assert {:ok, results} = Cluster.pipeline(cluster, commands)
+      assert Enum.at(results, 0) == "OK"
+      assert Enum.at(results, 1) == "PONG"
+      assert Enum.at(results, 2) == "OK"
+      assert Enum.at(results, 3) == "PONG"
+    end
+
+    test "cross-slot pipeline preserves result ordering", %{cluster: cluster} do
+      # Set up keys across different slots
+      keys = for i <- 1..10, do: "order:#{i}"
+      set_commands = for {k, i} <- Enum.with_index(keys, 1), do: ["SET", k, "v#{i}"]
+
+      assert {:ok, set_results} = Cluster.pipeline(cluster, set_commands)
+      assert Enum.all?(set_results, &(&1 == "OK"))
+
+      # Now GET them all in a pipeline and verify ordering
+      get_commands = for k <- keys, do: ["GET", k]
+      assert {:ok, get_results} = Cluster.pipeline(cluster, get_commands)
+
+      expected = for i <- 1..10, do: "v#{i}"
+      assert get_results == expected
     end
 
     test "key-less commands work", %{cluster: cluster} do
