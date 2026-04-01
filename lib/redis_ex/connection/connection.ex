@@ -184,6 +184,19 @@ defmodule RedisEx.Connection do
   end
 
   @impl true
+  # Accept both 2-tuple (direct) and 3-tuple (from resilience wrappers)
+  def handle_call({:command, args, _opts}, from, %{state: :ready} = state) do
+    handle_call({:command, args}, from, state)
+  end
+
+  def handle_call({:pipeline, commands, _opts}, from, %{state: :ready} = state) do
+    handle_call({:pipeline, commands}, from, state)
+  end
+
+  def handle_call({:transaction, commands, _opts}, from, %{state: :ready} = state) do
+    handle_call({:transaction, commands}, from, state)
+  end
+
   def handle_call({:command, args}, from, %{state: :ready} = state) do
     data = encode(state.protocol, args)
 
