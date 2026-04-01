@@ -162,6 +162,10 @@ defmodule RedisEx.Cluster do
     {:reply, %{nodes: nodes, slot_coverage: slot_coverage, seed_nodes: state.seed_nodes}, state}
   end
 
+  def handle_call(:get_connections, _from, state) do
+    {:reply, state.connections, state}
+  end
+
   def handle_call(:refresh, _from, state) do
     case refresh_topology(state) do
       {:ok, state} -> {:reply, :ok, state}

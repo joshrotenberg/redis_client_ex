@@ -55,7 +55,8 @@ defmodule RedisEx.Sentinel do
     :current_addr,
     backoff_initial: 500,
     backoff_max: 30_000,
-    backoff_current: 500
+    backoff_current: 500,
+    monitor: nil
   ]
 
   # -------------------------------------------------------------------
@@ -123,9 +124,33 @@ defmodule RedisEx.Sentinel do
     }
 
     case resolve_and_connect(state) do
-      {:ok, state} -> {:ok, state}
-      {:error, reason} -> {:stop, reason}
+      {:ok, state} ->
+        # Start failover monitor on the first reachable sentinel
+        state = start_monitor(state)
+        {:ok, state}
+
+      {:error, reason} ->
+        {:stop, reason}
     end
+  end
+
+  defp start_monitor(state) do
+    # Try each sentinel until we can start a monitor
+    monitor_pid =
+      Enum.find_value(state.sentinels, fn {host, port} ->
+        case RedisEx.Sentinel.Monitor.start_link(
+               sentinel_host: host,
+               sentinel_port: port,
+               sentinel_password: state.sentinel_password,
+               group: state.group,
+               notify: self()
+             ) do
+          {:ok, pid} -> pid
+          {:error, _} -> nil
+        end
+      end)
+
+    %{state | monitor: monitor_pid}
   end
 
   @impl true
@@ -190,16 +215,58 @@ defmodule RedisEx.Sentinel do
     end
   end
 
+  def handle_info({:failover, group, new_host, new_port}, %{group: group} = state) do
+    Logger.info("RedisEx.Sentinel: proactive failover to #{new_host}:#{new_port}")
+
+    # Stop old connection and connect to the new master
+    if state.conn do
+      try do
+        Connection.stop(state.conn)
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
+    conn_opts =
+      [host: new_host, port: new_port, protocol: state.protocol, timeout: state.timeout]
+      |> maybe_put(:password, state.password)
+      |> maybe_put(:username, state.username)
+      |> maybe_put(:database, state.database)
+
+    case Connection.start_link(conn_opts) do
+      {:ok, conn} ->
+        Logger.debug("RedisEx.Sentinel: connected to new master #{new_host}:#{new_port}")
+        {:noreply, %{state | conn: conn, current_addr: {new_host, new_port}}}
+
+      {:error, reason} ->
+        Logger.warning("RedisEx.Sentinel: failed to connect to new master: #{inspect(reason)}")
+        {:noreply, %{state | conn: nil, current_addr: nil}}
+    end
+  end
+
+  def handle_info({:failover, _other_group, _host, _port}, state) do
+    # Ignore failovers for other groups
+    {:noreply, state}
+  end
+
   def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
-  def terminate(_reason, %{conn: nil}), do: :ok
+  def terminate(_reason, state) do
+    if state.monitor do
+      try do
+        RedisEx.Sentinel.Monitor.stop(state.monitor)
+      catch
+        :exit, _ -> :ok
+      end
+    end
 
-  def terminate(_reason, %{conn: conn}) do
-    try do
-      Connection.stop(conn)
-    catch
-      :exit, _ -> :ok
+    if state.conn do
+      try do
+        Connection.stop(state.conn)
+      catch
+        :exit, _ -> :ok
+      end
     end
   end
 
