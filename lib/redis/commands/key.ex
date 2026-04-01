@@ -113,8 +113,17 @@ defmodule Redis.Commands.Key do
   def sort(key, opts \\ []) do
     cmd = ["SORT", key]
     cmd = if opts[:by], do: cmd ++ ["BY", opts[:by]], else: cmd
-    cmd = if opts[:limit], do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))], else: cmd
-    cmd = if opts[:get], do: cmd ++ Enum.flat_map(List.wrap(opts[:get]), fn g -> ["GET", g] end), else: cmd
+
+    cmd =
+      if opts[:limit],
+        do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))],
+        else: cmd
+
+    cmd =
+      if opts[:get],
+        do: cmd ++ Enum.flat_map(List.wrap(opts[:get]), fn g -> ["GET", g] end),
+        else: cmd
+
     cmd = if opts[:asc], do: cmd ++ ["ASC"], else: cmd
     cmd = if opts[:desc], do: cmd ++ ["DESC"], else: cmd
     cmd = if opts[:alpha], do: cmd ++ ["ALPHA"], else: cmd
@@ -135,21 +144,37 @@ defmodule Redis.Commands.Key do
   def sort_ro(key, opts \\ []) do
     cmd = ["SORT_RO", key]
     cmd = if opts[:by], do: cmd ++ ["BY", opts[:by]], else: cmd
-    cmd = if opts[:limit], do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))], else: cmd
-    cmd = if opts[:get], do: cmd ++ Enum.flat_map(List.wrap(opts[:get]), fn g -> ["GET", g] end), else: cmd
+
+    cmd =
+      if opts[:limit],
+        do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))],
+        else: cmd
+
+    cmd =
+      if opts[:get],
+        do: cmd ++ Enum.flat_map(List.wrap(opts[:get]), fn g -> ["GET", g] end),
+        else: cmd
+
     cmd = if opts[:asc], do: cmd ++ ["ASC"], else: cmd
     cmd = if opts[:desc], do: cmd ++ ["DESC"], else: cmd
     cmd = if opts[:alpha], do: cmd ++ ["ALPHA"], else: cmd
     cmd
   end
 
-  @spec migrate(String.t(), integer(), String.t(), integer(), integer(), keyword()) :: [String.t()]
+  @spec migrate(String.t(), integer(), String.t(), integer(), integer(), keyword()) :: [
+          String.t()
+        ]
   def migrate(host, port, key, dest_db, timeout, opts \\ []) do
     cmd = ["MIGRATE", host, to_string(port), key, to_string(dest_db), to_string(timeout)]
     cmd = if opts[:copy], do: cmd ++ ["COPY"], else: cmd
     cmd = if opts[:replace], do: cmd ++ ["REPLACE"], else: cmd
     cmd = if opts[:auth], do: cmd ++ ["AUTH", opts[:auth]], else: cmd
-    cmd = if opts[:auth2], do: cmd ++ ["AUTH2", elem(opts[:auth2], 0), elem(opts[:auth2], 1)], else: cmd
+
+    cmd =
+      if opts[:auth2],
+        do: cmd ++ ["AUTH2", elem(opts[:auth2], 0), elem(opts[:auth2], 1)],
+        else: cmd
+
     cmd = if opts[:keys], do: cmd ++ ["KEYS" | opts[:keys]], else: cmd
     cmd
   end

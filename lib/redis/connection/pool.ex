@@ -211,7 +211,9 @@ defmodule Redis.Connection.Pool do
     results =
       Enum.reduce_while(1..state.pool_size, {:ok, state}, fn _i, {:ok, s} ->
         case start_and_monitor(s) do
-          {:ok, s} -> {:cont, {:ok, s}}
+          {:ok, s} ->
+            {:cont, {:ok, s}}
+
           {:error, reason} ->
             # Clean up already-started connections
             Enum.each(s.conns, fn c ->
@@ -233,7 +235,13 @@ defmodule Redis.Connection.Pool do
     case Connection.start_link(state.conn_opts) do
       {:ok, conn} ->
         ref = Process.monitor(conn)
-        state = %{state | conns: state.conns ++ [conn], monitors: Map.put(state.monitors, ref, conn)}
+
+        state = %{
+          state
+          | conns: state.conns ++ [conn],
+            monitors: Map.put(state.monitors, ref, conn)
+        }
+
         {:ok, state}
 
       {:error, reason} ->

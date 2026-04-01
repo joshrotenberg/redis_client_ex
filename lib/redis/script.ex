@@ -58,12 +58,15 @@ defmodule Redis.Script do
     args = Keyword.get(opts, :args, [])
     numkeys = length(keys)
 
-    evalsha_args = ["EVALSHA", script.sha, to_string(numkeys)] ++ keys ++ Enum.map(args, &to_string/1)
+    evalsha_args =
+      ["EVALSHA", script.sha, to_string(numkeys)] ++ keys ++ Enum.map(args, &to_string/1)
 
     case Connection.command(conn, evalsha_args) do
       {:error, %Redis.Error{message: "NOSCRIPT" <> _}} ->
         # Script not cached on server — fall back to EVAL (which also caches it)
-        eval_args = ["EVAL", script.source, to_string(numkeys)] ++ keys ++ Enum.map(args, &to_string/1)
+        eval_args =
+          ["EVAL", script.source, to_string(numkeys)] ++ keys ++ Enum.map(args, &to_string/1)
+
         Connection.command(conn, eval_args)
 
       result ->
@@ -115,11 +118,14 @@ defmodule Redis.Script do
     args = Keyword.get(opts, :args, [])
     numkeys = length(keys)
 
-    evalsha_args = ["EVALSHA_RO", script.sha, to_string(numkeys)] ++ keys ++ Enum.map(args, &to_string/1)
+    evalsha_args =
+      ["EVALSHA_RO", script.sha, to_string(numkeys)] ++ keys ++ Enum.map(args, &to_string/1)
 
     case Connection.command(conn, evalsha_args) do
       {:error, %Redis.Error{message: "NOSCRIPT" <> _}} ->
-        eval_args = ["EVAL_RO", script.source, to_string(numkeys)] ++ keys ++ Enum.map(args, &to_string/1)
+        eval_args =
+          ["EVAL_RO", script.source, to_string(numkeys)] ++ keys ++ Enum.map(args, &to_string/1)
+
         Connection.command(conn, eval_args)
 
       result ->

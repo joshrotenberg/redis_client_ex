@@ -15,17 +15,20 @@ defmodule Redis.Protocol.Coerce do
       #=> MapSet.new(["a", "b", "c"])
   """
 
+  @map_commands ~w(HGETALL CONFIG XRANGE XREVRANGE)
+  @set_commands ~w(SMEMBERS SDIFF SINTER SUNION)
+
   @doc """
   Coerces a RESP2 result based on the command name.
   Returns the result unchanged if no coercion applies.
   """
   @spec coerce(term(), String.t()) :: term()
   def coerce(result, command) when is_binary(command) do
-    coerce(result, String.upcase(command))
+    do_coerce(result, String.upcase(command))
   end
 
   # Flat list → map
-  def coerce(result, cmd) when is_list(result) and cmd in ~w(HGETALL CONFIG XRANGE XREVRANGE) do
+  defp do_coerce(result, cmd) when is_list(result) and cmd in @map_commands do
     if rem(length(result), 2) == 0 do
       result
       |> Enum.chunk_every(2)
@@ -36,12 +39,12 @@ defmodule Redis.Protocol.Coerce do
   end
 
   # List → MapSet
-  def coerce(result, cmd) when is_list(result) and cmd in ~w(SMEMBERS SDIFF SINTER SUNION) do
+  defp do_coerce(result, cmd) when is_list(result) and cmd in @set_commands do
     MapSet.new(result)
   end
 
   # No coercion needed
-  def coerce(result, _command), do: result
+  defp do_coerce(result, _command), do: result
 
   @doc """
   Extracts the command name from a command list for coercion lookup.

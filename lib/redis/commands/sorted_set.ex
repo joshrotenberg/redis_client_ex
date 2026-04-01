@@ -29,7 +29,12 @@ defmodule Redis.Commands.SortedSet do
   def zrange(key, min, max, opts \\ []) do
     cmd = ["ZRANGE", key, to_string(min), to_string(max)]
     cmd = if opts[:rev], do: cmd ++ ["REV"], else: cmd
-    cmd = if opts[:limit], do: cmd ++ ["LIMIT" | Enum.map(Tuple.to_list(opts[:limit]), &to_string/1)], else: cmd
+
+    cmd =
+      if opts[:limit],
+        do: cmd ++ ["LIMIT" | Enum.map(Tuple.to_list(opts[:limit]), &to_string/1)],
+        else: cmd
+
     cmd = if opts[:withscores], do: cmd ++ ["WITHSCORES"], else: cmd
     cmd
   end
@@ -63,7 +68,12 @@ defmodule Redis.Commands.SortedSet do
   @spec zinter(integer(), [String.t()], keyword()) :: [String.t()]
   def zinter(numkeys, keys, opts \\ []) when is_list(keys) do
     cmd = ["ZINTER", to_string(numkeys)] ++ keys
-    cmd = if opts[:weights], do: cmd ++ ["WEIGHTS" | Enum.map(opts[:weights], &to_string/1)], else: cmd
+
+    cmd =
+      if opts[:weights],
+        do: cmd ++ ["WEIGHTS" | Enum.map(opts[:weights], &to_string/1)],
+        else: cmd
+
     cmd = if opts[:aggregate], do: cmd ++ ["AGGREGATE", opts[:aggregate]], else: cmd
     cmd = if opts[:withscores], do: cmd ++ ["WITHSCORES"], else: cmd
     cmd
@@ -78,7 +88,12 @@ defmodule Redis.Commands.SortedSet do
   @spec zinterstore(String.t(), integer(), [String.t()], keyword()) :: [String.t()]
   def zinterstore(destination, numkeys, keys, opts \\ []) when is_list(keys) do
     cmd = ["ZINTERSTORE", destination, to_string(numkeys)] ++ keys
-    cmd = if opts[:weights], do: cmd ++ ["WEIGHTS" | Enum.map(opts[:weights], &to_string/1)], else: cmd
+
+    cmd =
+      if opts[:weights],
+        do: cmd ++ ["WEIGHTS" | Enum.map(opts[:weights], &to_string/1)],
+        else: cmd
+
     cmd = if opts[:aggregate], do: cmd ++ ["AGGREGATE", opts[:aggregate]], else: cmd
     cmd
   end
@@ -116,14 +131,22 @@ defmodule Redis.Commands.SortedSet do
   @spec zrangebylex(String.t(), String.t(), String.t(), keyword()) :: [String.t()]
   def zrangebylex(key, min, max, opts \\ []) do
     cmd = ["ZRANGEBYLEX", key, min, max]
-    if opts[:limit], do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))], else: cmd
+
+    if opts[:limit],
+      do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))],
+      else: cmd
   end
 
   @spec zrangebyscore(String.t(), String.t(), String.t(), keyword()) :: [String.t()]
   def zrangebyscore(key, min, max, opts \\ []) do
     cmd = ["ZRANGEBYSCORE", key, min, max]
     cmd = if opts[:withscores], do: cmd ++ ["WITHSCORES"], else: cmd
-    cmd = if opts[:limit], do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))], else: cmd
+
+    cmd =
+      if opts[:limit],
+        do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))],
+        else: cmd
+
     cmd
   end
 
@@ -133,7 +156,12 @@ defmodule Redis.Commands.SortedSet do
     cmd = if opts[:byscore], do: cmd ++ ["BYSCORE"], else: cmd
     cmd = if opts[:bylex], do: cmd ++ ["BYLEX"], else: cmd
     cmd = if opts[:rev], do: cmd ++ ["REV"], else: cmd
-    cmd = if opts[:limit], do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))], else: cmd
+
+    cmd =
+      if opts[:limit],
+        do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))],
+        else: cmd
+
     cmd
   end
 
@@ -147,7 +175,12 @@ defmodule Redis.Commands.SortedSet do
   def zrevrangebyscore(key, max, min, opts \\ []) do
     cmd = ["ZREVRANGEBYSCORE", key, max, min]
     cmd = if opts[:withscores], do: cmd ++ ["WITHSCORES"], else: cmd
-    cmd = if opts[:limit], do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))], else: cmd
+
+    cmd =
+      if opts[:limit],
+        do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))],
+        else: cmd
+
     cmd
   end
 
@@ -165,7 +198,12 @@ defmodule Redis.Commands.SortedSet do
   @spec zunion(integer(), [String.t()], keyword()) :: [String.t()]
   def zunion(numkeys, keys, opts \\ []) when is_list(keys) do
     cmd = ["ZUNION", to_string(numkeys)] ++ keys
-    cmd = if opts[:weights], do: cmd ++ ["WEIGHTS" | Enum.map(opts[:weights], &to_string/1)], else: cmd
+
+    cmd =
+      if opts[:weights],
+        do: cmd ++ ["WEIGHTS" | Enum.map(opts[:weights], &to_string/1)],
+        else: cmd
+
     cmd = if opts[:aggregate], do: cmd ++ ["AGGREGATE", opts[:aggregate]], else: cmd
     cmd = if opts[:withscores], do: cmd ++ ["WITHSCORES"], else: cmd
     cmd
@@ -174,7 +212,12 @@ defmodule Redis.Commands.SortedSet do
   @spec zunionstore(String.t(), integer(), [String.t()], keyword()) :: [String.t()]
   def zunionstore(destination, numkeys, keys, opts \\ []) when is_list(keys) do
     cmd = ["ZUNIONSTORE", destination, to_string(numkeys)] ++ keys
-    cmd = if opts[:weights], do: cmd ++ ["WEIGHTS" | Enum.map(opts[:weights], &to_string/1)], else: cmd
+
+    cmd =
+      if opts[:weights],
+        do: cmd ++ ["WEIGHTS" | Enum.map(opts[:weights], &to_string/1)],
+        else: cmd
+
     cmd = if opts[:aggregate], do: cmd ++ ["AGGREGATE", opts[:aggregate]], else: cmd
     cmd
   end
@@ -183,7 +226,8 @@ defmodule Redis.Commands.SortedSet do
   def zremrangebylex(key, min, max), do: ["ZREMRANGEBYLEX", key, min, max]
 
   @spec zremrangebyrank(String.t(), integer(), integer()) :: [String.t()]
-  def zremrangebyrank(key, start, stop), do: ["ZREMRANGEBYRANK", key, to_string(start), to_string(stop)]
+  def zremrangebyrank(key, start, stop),
+    do: ["ZREMRANGEBYRANK", key, to_string(start), to_string(stop)]
 
   @spec zremrangebyscore(String.t(), String.t(), String.t()) :: [String.t()]
   def zremrangebyscore(key, min, max), do: ["ZREMRANGEBYSCORE", key, min, max]
@@ -203,6 +247,9 @@ defmodule Redis.Commands.SortedSet do
   @spec zrevrangebylex(String.t(), String.t(), String.t(), keyword()) :: [String.t()]
   def zrevrangebylex(key, max, min, opts \\ []) do
     cmd = ["ZREVRANGEBYLEX", key, max, min]
-    if opts[:limit], do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))], else: cmd
+
+    if opts[:limit],
+      do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))],
+      else: cmd
   end
 end

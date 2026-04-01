@@ -47,9 +47,7 @@ defmodule Redis.ClusterTest do
     assert RedisServerWrapper.Cluster.healthy?(cluster_srv)
 
     {:ok, cluster} =
-      Cluster.start_link(
-        nodes: [{"127.0.0.1", 7300}, {"127.0.0.1", 7301}, {"127.0.0.1", 7302}]
-      )
+      Cluster.start_link(nodes: [{"127.0.0.1", 7300}, {"127.0.0.1", 7301}, {"127.0.0.1", 7302}])
 
     on_exit(fn ->
       try do

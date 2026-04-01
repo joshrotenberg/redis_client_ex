@@ -61,8 +61,12 @@ defmodule Redis.Resilience do
   end
 
   def command(r, args, opts \\ []), do: GenServer.call(r, {:command, args, opts}, 30_000)
-  def pipeline(r, commands, opts \\ []), do: GenServer.call(r, {:pipeline, commands, opts}, 30_000)
-  def transaction(r, commands, opts \\ []), do: GenServer.call(r, {:transaction, commands, opts}, 30_000)
+
+  def pipeline(r, commands, opts \\ []),
+    do: GenServer.call(r, {:pipeline, commands, opts}, 30_000)
+
+  def transaction(r, commands, opts \\ []),
+    do: GenServer.call(r, {:transaction, commands, opts}, 30_000)
 
   @doc "Returns info about the resilience stack."
   def info(r), do: GenServer.call(r, :info)

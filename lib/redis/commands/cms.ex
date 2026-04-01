@@ -15,7 +15,11 @@ defmodule Redis.Commands.CMS do
 
   @spec incrby(String.t(), [{String.t(), integer()}]) :: [String.t()]
   def incrby(key, item_increments) when is_list(item_increments) do
-    ["CMS.INCRBY", key | Enum.flat_map(item_increments, fn {item, increment} -> [item, to_string(increment)] end)]
+    [
+      "CMS.INCRBY",
+      key
+      | Enum.flat_map(item_increments, fn {item, increment} -> [item, to_string(increment)] end)
+    ]
   end
 
   @spec query(String.t(), [String.t()]) :: [String.t()]
@@ -24,7 +28,12 @@ defmodule Redis.Commands.CMS do
   @spec merge(String.t(), [String.t()], keyword()) :: [String.t()]
   def merge(destkey, sources, opts \\ []) when is_list(sources) do
     cmd = ["CMS.MERGE", destkey, to_string(length(sources)) | sources]
-    cmd = if opts[:weights], do: cmd ++ ["WEIGHTS" | Enum.map(opts[:weights], &to_string/1)], else: cmd
+
+    cmd =
+      if opts[:weights],
+        do: cmd ++ ["WEIGHTS" | Enum.map(opts[:weights], &to_string/1)],
+        else: cmd
+
     cmd
   end
 

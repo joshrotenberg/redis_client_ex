@@ -38,10 +38,11 @@ defmodule Redis.Resilience.Coalesce do
 
   @impl true
   def init(opts) do
-    {:ok, %__MODULE__{
-      conn: Keyword.fetch!(opts, :conn),
-      ttl: Keyword.get(opts, :ttl, 0)
-    }}
+    {:ok,
+     %__MODULE__{
+       conn: Keyword.fetch!(opts, :conn),
+       ttl: Keyword.get(opts, :ttl, 0)
+     }}
   end
 
   @impl true

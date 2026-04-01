@@ -61,6 +61,7 @@ defmodule Redis.Commands.Script do
   @spec function_restore(String.t(), keyword()) :: [String.t()]
   def function_restore(serialized_value, opts \\ []) do
     cmd = ["FUNCTION", "RESTORE", serialized_value]
+
     cond do
       opts[:flush] -> cmd ++ ["FLUSH"]
       opts[:append] -> cmd ++ ["APPEND"]

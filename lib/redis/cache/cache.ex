@@ -169,7 +169,8 @@ defmodule Redis.Cache do
     {cached, missed_keys, missed_indices, store} =
       keys
       |> Enum.with_index()
-      |> Enum.reduce({%{}, [], [], state.store}, fn {key, idx}, {cached, missed_k, missed_i, st} ->
+      |> Enum.reduce({%{}, [], [], state.store}, fn {key, idx},
+                                                    {cached, missed_k, missed_i, st} ->
         case Store.get(st, key) do
           {:hit, value, st} -> {Map.put(cached, idx, value), missed_k, missed_i, st}
           {:miss, st} -> {cached, [key | missed_k], [idx | missed_i], st}

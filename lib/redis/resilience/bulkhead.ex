@@ -28,7 +28,9 @@ defmodule Redis.Resilience.Bulkhead do
   end
 
   def command(bh, args, opts \\ []), do: GenServer.call(bh, {:command, args, opts}, 30_000)
-  def pipeline(bh, commands, opts \\ []), do: GenServer.call(bh, {:pipeline, commands, opts}, 30_000)
+
+  def pipeline(bh, commands, opts \\ []),
+    do: GenServer.call(bh, {:pipeline, commands, opts}, 30_000)
 
   @doc "Returns current bulkhead state."
   def state(bh), do: GenServer.call(bh, :state)
@@ -37,11 +39,12 @@ defmodule Redis.Resilience.Bulkhead do
 
   @impl true
   def init(opts) do
-    {:ok, %__MODULE__{
-      conn: Keyword.fetch!(opts, :conn),
-      max_concurrent: Keyword.get(opts, :max_concurrent, 50),
-      max_wait: Keyword.get(opts, :max_wait, 5_000)
-    }}
+    {:ok,
+     %__MODULE__{
+       conn: Keyword.fetch!(opts, :conn),
+       max_concurrent: Keyword.get(opts, :max_concurrent, 50),
+       max_wait: Keyword.get(opts, :max_wait, 5_000)
+     }}
   end
 
   @impl true

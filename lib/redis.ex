@@ -73,5 +73,6 @@ defmodule Redis do
 
   @doc "Sends multiple commands without waiting for replies."
   @spec noreply_pipeline(conn(), [[String.t()]], keyword()) :: :ok | {:error, term()}
-  def noreply_pipeline(conn, commands, opts \\ []), do: Connection.noreply_pipeline(conn, commands, opts)
+  def noreply_pipeline(conn, commands, opts \\ []),
+    do: Connection.noreply_pipeline(conn, commands, opts)
 end

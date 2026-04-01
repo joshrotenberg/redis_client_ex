@@ -75,7 +75,8 @@ defmodule Redis.Commands.String do
   def setex(key, seconds, value), do: ["SETEX", key, to_string(seconds), to_string(value)]
 
   @spec psetex(String.t(), integer(), String.t()) :: [String.t()]
-  def psetex(key, milliseconds, value), do: ["PSETEX", key, to_string(milliseconds), to_string(value)]
+  def psetex(key, milliseconds, value),
+    do: ["PSETEX", key, to_string(milliseconds), to_string(value)]
 
   @spec setnx(String.t(), String.t()) :: [String.t()]
   def setnx(key, value), do: ["SETNX", key, to_string(value)]
@@ -94,7 +95,10 @@ defmodule Redis.Commands.String do
     cmd = ["LCS", key1, key2]
     cmd = if opts[:len], do: cmd ++ ["LEN"], else: cmd
     cmd = if opts[:idx], do: cmd ++ ["IDX"], else: cmd
-    cmd = if opts[:minmatchlen], do: cmd ++ ["MINMATCHLEN", to_string(opts[:minmatchlen])], else: cmd
+
+    cmd =
+      if opts[:minmatchlen], do: cmd ++ ["MINMATCHLEN", to_string(opts[:minmatchlen])], else: cmd
+
     cmd = if opts[:withmatchlen], do: cmd ++ ["WITHMATCHLEN"], else: cmd
     cmd
   end

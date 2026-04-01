@@ -41,6 +41,7 @@ defmodule Redis.URI do
 
     opts = []
     opts = if uri.host && uri.host != "", do: [{:host, uri.host} | opts], else: opts
+
     # uri.port will be 80/443 from http/https normalization — only use if original URI had a port
     actual_port =
       case Regex.run(~r/:(\d+)(?:\/|$)/, uri_string) do
@@ -70,9 +71,15 @@ defmodule Redis.URI do
 
     opts =
       case uri.path do
-        nil -> opts
-        "" -> opts
-        "/" -> opts
+        nil ->
+          opts
+
+        "" ->
+          opts
+
+        "/" ->
+          opts
+
         "/" <> db_str ->
           case Integer.parse(db_str) do
             {db, ""} when db > 0 -> [{:database, db} | opts]

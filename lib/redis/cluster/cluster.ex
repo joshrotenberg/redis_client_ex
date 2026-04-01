@@ -237,7 +237,10 @@ defmodule Redis.Cluster do
                   end
                 end)
 
-              Logger.debug("Redis.Cluster: discovered #{length(nodes)} nodes, #{length(slot_entries)} slots")
+              Logger.debug(
+                "Redis.Cluster: discovered #{length(nodes)} nodes, #{length(slot_entries)} slots"
+              )
+
               {:halt, {:ok, %{state | connections: connections}}}
 
             {:error, reason} ->
@@ -364,10 +367,12 @@ defmodule Redis.Cluster do
       commands
       |> Enum.with_index()
       |> Enum.map(fn {cmd, idx} ->
-        slot = case Router.slot_for_command(cmd) do
-          {:ok, s} -> s
-          {:error, :no_key} -> :no_key
-        end
+        slot =
+          case Router.slot_for_command(cmd) do
+            {:ok, s} -> s
+            {:error, :no_key} -> :no_key
+          end
+
         {idx, slot, cmd}
       end)
 
@@ -377,22 +382,26 @@ defmodule Redis.Cluster do
       |> Enum.group_by(fn {_idx, slot, _cmd} -> slot end)
 
     # For key-less commands, pick any connection
-    default_conn = case any_connection(state) do
-      {:ok, conn} -> conn
-      _ -> nil
-    end
+    default_conn =
+      case any_connection(state) do
+        {:ok, conn} -> conn
+        _ -> nil
+      end
 
     # Send each group in parallel using Task.async
     tasks =
       Enum.map(groups, fn {slot, entries} ->
-        conn = case slot do
-          :no_key -> default_conn
-          s ->
-            case get_connection_for_slot(state, s) do
-              {:ok, c} -> c
-              _ -> nil
-            end
-        end
+        conn =
+          case slot do
+            :no_key ->
+              default_conn
+
+            s ->
+              case get_connection_for_slot(state, s) do
+                {:ok, c} -> c
+                _ -> nil
+              end
+          end
 
         indices = Enum.map(entries, fn {idx, _s, _c} -> idx end)
         cmds = Enum.map(entries, fn {_idx, _s, c} -> c end)
@@ -417,6 +426,7 @@ defmodule Redis.Cluster do
       Enum.reduce(task_results, {[], []}, fn
         {:ok, idx_results}, {pairs, errs} ->
           {idx_results ++ pairs, errs}
+
         {:error, reason, indices}, {pairs, errs} ->
           {pairs, [{reason, indices} | errs]}
       end)
@@ -483,7 +493,9 @@ defmodule Redis.Cluster do
 
   defp parse_nodes(nodes) do
     Enum.map(nodes, fn
-      {host, port} -> {host, port}
+      {host, port} ->
+        {host, port}
+
       str when is_binary(str) ->
         case String.split(str, ":") do
           [host, port_str] -> {host, String.to_integer(port_str)}

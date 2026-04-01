@@ -156,18 +156,20 @@ defmodule Redis.IntegrationTest do
       {:ok, publisher} = Connection.start_link(port: 6456)
 
       sub1 = self()
-      sub2 = spawn(fn ->
-        # Drain subscribe confirmations, forward only messages
-        receive_loop = fn loop ->
-          receive do
-            {:redis_pubsub, :message, _, _} = msg -> send(sub1, {:sub2_got, msg})
-            {:redis_pubsub, :subscribed, _, _} -> loop.(loop)
-            _ -> loop.(loop)
-          end
-        end
 
-        receive_loop.(receive_loop)
-      end)
+      sub2 =
+        spawn(fn ->
+          # Drain subscribe confirmations, forward only messages
+          receive_loop = fn loop ->
+            receive do
+              {:redis_pubsub, :message, _, _} = msg -> send(sub1, {:sub2_got, msg})
+              {:redis_pubsub, :subscribed, _, _} -> loop.(loop)
+              _ -> loop.(loop)
+            end
+          end
+
+          receive_loop.(receive_loop)
+        end)
 
       :ok = PubSub.subscribe(ps, "multi_sub", self())
       :ok = PubSub.subscribe(ps, "multi_sub", sub2)
@@ -212,7 +214,8 @@ defmodule Redis.IntegrationTest do
       Process.sleep(500)
 
       stats = Cache.stats(cache)
-      assert stats.evictions >= 40  # Most should be evicted
+      # Most should be evicted
+      assert stats.evictions >= 40
 
       # Verify new values are fetched
       {:ok, val} = Cache.get(cache, "inv:1")

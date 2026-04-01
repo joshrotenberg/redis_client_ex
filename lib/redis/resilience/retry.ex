@@ -40,8 +40,13 @@ defmodule Redis.Resilience.Retry do
   end
 
   def command(retry, args, opts \\ []), do: GenServer.call(retry, {:command, args, opts}, 30_000)
-  def pipeline(retry, commands, opts \\ []), do: GenServer.call(retry, {:pipeline, commands, opts}, 30_000)
-  def transaction(retry, commands, opts \\ []), do: GenServer.call(retry, {:transaction, commands, opts}, 30_000)
+
+  def pipeline(retry, commands, opts \\ []),
+    do: GenServer.call(retry, {:pipeline, commands, opts}, 30_000)
+
+  def transaction(retry, commands, opts \\ []),
+    do: GenServer.call(retry, {:transaction, commands, opts}, 30_000)
+
   def stop(retry), do: GenServer.stop(retry, :normal)
 
   @impl true

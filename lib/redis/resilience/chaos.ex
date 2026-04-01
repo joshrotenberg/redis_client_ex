@@ -40,7 +40,10 @@ defmodule Redis.Resilience.Chaos do
   end
 
   def command(chaos, args, opts \\ []), do: GenServer.call(chaos, {:command, args, opts}, 30_000)
-  def pipeline(chaos, cmds, opts \\ []), do: GenServer.call(chaos, {:pipeline, cmds, opts}, 30_000)
+
+  def pipeline(chaos, cmds, opts \\ []),
+    do: GenServer.call(chaos, {:pipeline, cmds, opts}, 30_000)
+
   def stop(chaos), do: GenServer.stop(chaos, :normal)
 
   @impl true
@@ -54,9 +57,10 @@ defmodule Redis.Resilience.Chaos do
       latency_rate: Keyword.get(opts, :latency_rate, 0.0),
       min_latency: Keyword.get(opts, :min_latency, 50),
       max_latency: Keyword.get(opts, :max_latency, 500),
-      error_fn: Keyword.get(opts, :error_fn, fn ->
-        {:error, %Redis.ConnectionError{reason: :chaos_injected}}
-      end)
+      error_fn:
+        Keyword.get(opts, :error_fn, fn ->
+          {:error, %Redis.ConnectionError{reason: :chaos_injected}}
+        end)
     }
 
     {:ok, state}
@@ -64,12 +68,16 @@ defmodule Redis.Resilience.Chaos do
 
   @impl true
   def handle_call({:command, args, opts}, _from, state) do
-    result = maybe_inject(state, fn -> GenServer.call(state.conn, {:command, args, opts}, 30_000) end)
+    result =
+      maybe_inject(state, fn -> GenServer.call(state.conn, {:command, args, opts}, 30_000) end)
+
     {:reply, result, state}
   end
 
   def handle_call({:pipeline, cmds, opts}, _from, state) do
-    result = maybe_inject(state, fn -> GenServer.call(state.conn, {:pipeline, cmds, opts}, 30_000) end)
+    result =
+      maybe_inject(state, fn -> GenServer.call(state.conn, {:pipeline, cmds, opts}, 30_000) end)
+
     {:reply, result, state}
   end
 

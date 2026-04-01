@@ -15,8 +15,23 @@ defmodule Redis.Commands.SearchTest do
           ]
         )
 
-      assert ["FT.CREATE", "idx:users", "ON", "HASH", "PREFIX", "1", "user:",
-              "SCHEMA", "name", "TEXT", "age", "NUMERIC", "SORTABLE", "email", "TAG"] = cmd
+      assert [
+               "FT.CREATE",
+               "idx:users",
+               "ON",
+               "HASH",
+               "PREFIX",
+               "1",
+               "user:",
+               "SCHEMA",
+               "name",
+               "TEXT",
+               "age",
+               "NUMERIC",
+               "SORTABLE",
+               "email",
+               "TAG"
+             ] = cmd
     end
 
     test "CREATE JSON index with AS aliases" do
@@ -29,9 +44,25 @@ defmodule Redis.Commands.SearchTest do
           ]
         )
 
-      assert ["FT.CREATE", "idx:docs", "ON", "JSON", "PREFIX", "1", "doc:",
-              "SCHEMA", "$.title", "AS", "title", "TEXT",
-              "$.score", "AS", "score", "NUMERIC", "SORTABLE"] = cmd
+      assert [
+               "FT.CREATE",
+               "idx:docs",
+               "ON",
+               "JSON",
+               "PREFIX",
+               "1",
+               "doc:",
+               "SCHEMA",
+               "$.title",
+               "AS",
+               "title",
+               "TEXT",
+               "$.score",
+               "AS",
+               "score",
+               "NUMERIC",
+               "SORTABLE"
+             ] = cmd
     end
 
     test "CREATE with stopwords" do

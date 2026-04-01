@@ -194,9 +194,10 @@ defmodule Redis.PubSub.Sharded do
             end
           end
 
-          state = %{state |
-            channels: Map.delete(state.channels, channel),
-            channel_node: Map.delete(state.channel_node, channel)
+          state = %{
+            state
+            | channels: Map.delete(state.channels, channel),
+              channel_node: Map.delete(state.channel_node, channel)
           }
 
           state = maybe_demonitor(state, subscriber)
@@ -340,10 +341,11 @@ defmodule Redis.PubSub.Sharded do
               :inet.setopts(socket, active: true)
               socket_port = :erlang.port_info(socket, :id) |> elem(1)
 
-              state = %{state |
-                node_sockets: Map.put(state.node_sockets, node_addr, socket),
-                node_buffers: Map.put(state.node_buffers, node_addr, <<>>),
-                socket_to_node: Map.put(state.socket_to_node, socket_port, node_addr)
+              state = %{
+                state
+                | node_sockets: Map.put(state.node_sockets, node_addr, socket),
+                  node_buffers: Map.put(state.node_buffers, node_addr, <<>>),
+                  socket_to_node: Map.put(state.socket_to_node, socket_port, node_addr)
               }
 
               {:ok, state}
@@ -388,10 +390,11 @@ defmodule Redis.PubSub.Sharded do
       node_addr ->
         :gen_tcp.close(socket)
 
-        %{state |
-          node_sockets: Map.delete(state.node_sockets, node_addr),
-          node_buffers: Map.delete(state.node_buffers, node_addr),
-          socket_to_node: Map.delete(state.socket_to_node, socket_port)
+        %{
+          state
+          | node_sockets: Map.delete(state.node_sockets, node_addr),
+            node_buffers: Map.delete(state.node_buffers, node_addr),
+            socket_to_node: Map.delete(state.socket_to_node, socket_port)
         }
     end
   end
@@ -448,7 +451,9 @@ defmodule Redis.PubSub.Sharded do
 
     if not in_channels do
       case Map.pop(state.monitors, pid) do
-        {nil, _} -> state
+        {nil, _} ->
+          state
+
         {ref, monitors} ->
           Process.demonitor(ref, [:flush])
           %{state | monitors: monitors}
@@ -478,7 +483,9 @@ defmodule Redis.PubSub.Sharded do
 
       if node_addr do
         case Map.get(state.node_sockets, node_addr) do
-          nil -> :ok
+          nil ->
+            :ok
+
           socket ->
             data = RESP2.encode(["SUNSUBSCRIBE", ch])
             :gen_tcp.send(socket, data)
@@ -491,10 +498,11 @@ defmodule Redis.PubSub.Sharded do
         Map.delete(acc, ch)
       end)
 
-    %{state |
-      channels: channels,
-      channel_node: channel_node,
-      monitors: Map.delete(state.monitors, pid)
+    %{
+      state
+      | channels: channels,
+        channel_node: channel_node,
+        monitors: Map.delete(state.monitors, pid)
     }
   end
 
@@ -504,7 +512,9 @@ defmodule Redis.PubSub.Sharded do
 
   defp parse_nodes(nodes) do
     Enum.map(nodes, fn
-      {host, port} -> {host, port}
+      {host, port} ->
+        {host, port}
+
       str when is_binary(str) ->
         case String.split(str, ":") do
           [host, port_str] -> {host, String.to_integer(port_str)}

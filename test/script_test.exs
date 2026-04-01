@@ -58,7 +58,11 @@ defmodule Redis.ScriptTest do
     end
 
     test "passes multiple keys and args", %{conn: conn} do
-      script = Script.new("redis.call('SET', KEYS[1], ARGV[1]) redis.call('SET', KEYS[2], ARGV[2]) return 'ok'")
+      script =
+        Script.new(
+          "redis.call('SET', KEYS[1], ARGV[1]) redis.call('SET', KEYS[2], ARGV[2]) return 'ok'"
+        )
+
       assert {:ok, "ok"} = Script.eval(conn, script, keys: ["k1", "k2"], args: ["v1", "v2"])
 
       assert {:ok, "v1"} = Connection.command(conn, ["GET", "k1"])

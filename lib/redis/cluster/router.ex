@@ -28,7 +28,8 @@ defmodule Redis.Cluster.Router do
   validates they all hash to the same slot.
   Returns `{:ok, slot}` or `{:error, :cross_slot}`.
   """
-  @spec slot_for_command([String.t()]) :: {:ok, non_neg_integer()} | {:error, :no_key} | {:error, :cross_slot}
+  @spec slot_for_command([String.t()]) ::
+          {:ok, non_neg_integer()} | {:error, :no_key} | {:error, :cross_slot}
   def slot_for_command(command) do
     case key_from_command(command) do
       nil -> {:error, :no_key}
@@ -39,7 +40,8 @@ defmodule Redis.Cluster.Router do
   @doc """
   Validates that all commands in a pipeline target the same slot.
   """
-  @spec validate_pipeline([[String.t()]]) :: {:ok, non_neg_integer()} | {:error, :cross_slot} | {:error, :empty}
+  @spec validate_pipeline([[String.t()]]) ::
+          {:ok, non_neg_integer()} | {:error, :cross_slot} | {:error, :empty}
   def validate_pipeline([]), do: {:error, :empty}
 
   def validate_pipeline(commands) do

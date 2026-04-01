@@ -85,7 +85,8 @@ defmodule Redis.PubSub do
   end
 
   @doc "Unsubscribe `subscriber` from `channel`."
-  @spec unsubscribe(GenServer.server(), String.t() | [String.t()], pid()) :: :ok | {:error, term()}
+  @spec unsubscribe(GenServer.server(), String.t() | [String.t()], pid()) ::
+          :ok | {:error, term()}
   def unsubscribe(pubsub, channels, subscriber \\ self())
 
   def unsubscribe(pubsub, channel, subscriber) when is_binary(channel) do
@@ -109,7 +110,8 @@ defmodule Redis.PubSub do
   end
 
   @doc "Unsubscribe `subscriber` from a pattern."
-  @spec punsubscribe(GenServer.server(), String.t() | [String.t()], pid()) :: :ok | {:error, term()}
+  @spec punsubscribe(GenServer.server(), String.t() | [String.t()], pid()) ::
+          :ok | {:error, term()}
   def punsubscribe(pubsub, patterns, subscriber \\ self())
 
   def punsubscribe(pubsub, pattern, subscriber) when is_binary(pattern) do
@@ -166,6 +168,7 @@ defmodule Redis.PubSub do
 
     # Send SUBSCRIBE to Redis
     data = RESP2.encode(["SUBSCRIBE" | channels])
+
     case :gen_tcp.send(state.socket, data) do
       :ok -> {:reply, :ok, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -212,6 +215,7 @@ defmodule Redis.PubSub do
       end)
 
     data = RESP2.encode(["PSUBSCRIBE" | patterns])
+
     case :gen_tcp.send(state.socket, data) do
       :ok -> {:reply, :ok, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -425,7 +429,9 @@ defmodule Redis.PubSub do
 
     if not in_channels and not in_patterns do
       case Map.pop(state.monitors, pid) do
-        {nil, _} -> state
+        {nil, _} ->
+          state
+
         {ref, monitors} ->
           Process.demonitor(ref, [:flush])
           %{state | monitors: monitors}

@@ -61,7 +61,9 @@ defmodule Redis.Resilience.CircuitBreaker do
 
   def command(cb, args, opts \\ []), do: GenServer.call(cb, {:command, args, opts})
   def pipeline(cb, commands, opts \\ []), do: GenServer.call(cb, {:pipeline, commands, opts})
-  def transaction(cb, commands, opts \\ []), do: GenServer.call(cb, {:transaction, commands, opts})
+
+  def transaction(cb, commands, opts \\ []),
+    do: GenServer.call(cb, {:transaction, commands, opts})
 
   @doc "Returns the current circuit state."
   def state(cb), do: GenServer.call(cb, :state)

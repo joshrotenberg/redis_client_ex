@@ -93,7 +93,8 @@ defmodule Redis.CacheTest do
       # Set and cache
       Cache.command(cache, ["SET", "inv_test", "original"])
       assert {:ok, "original"} = Cache.get(cache, "inv_test")
-      assert {:ok, "original"} = Cache.get(cache, "inv_test")  # hit
+      # hit
+      assert {:ok, "original"} = Cache.get(cache, "inv_test")
 
       # Modify via a separate connection (triggers invalidation)
       {:ok, other} = Connection.start_link(port: 6398)
@@ -154,9 +155,12 @@ defmodule Redis.CacheTest do
       {:ok, cache} = Cache.start_link(port: 6398)
 
       Cache.command(cache, ["SET", "st_key", "val"])
-      Cache.get(cache, "st_key")   # miss
-      Cache.get(cache, "st_key")   # hit
-      Cache.get(cache, "st_key")   # hit
+      # miss
+      Cache.get(cache, "st_key")
+      # hit
+      Cache.get(cache, "st_key")
+      # hit
+      Cache.get(cache, "st_key")
 
       stats = Cache.stats(cache)
       assert stats.misses >= 1
@@ -170,8 +174,10 @@ defmodule Redis.CacheTest do
       {:ok, cache} = Cache.start_link(port: 6398, ttl: 100)
 
       Cache.command(cache, ["SET", "ttl_test", "val"])
-      Cache.get(cache, "ttl_test")   # miss, cached with TTL
-      Cache.get(cache, "ttl_test")   # hit
+      # miss, cached with TTL
+      Cache.get(cache, "ttl_test")
+      # hit
+      Cache.get(cache, "ttl_test")
 
       Process.sleep(200)
 

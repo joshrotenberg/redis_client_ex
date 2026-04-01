@@ -94,7 +94,11 @@ defmodule Redis.ResilienceTest do
       {:ok, bh} = Bulkhead.start_link(conn: conn, max_concurrent: 1, max_wait: 0)
 
       # Fill the single slot with a blocking command (BLPOP with 2s timeout on empty list)
-      task = Task.async(fn -> Bulkhead.command(bh, ["BLPOP", "nonexistent_list_#{System.unique_integer()}", "2"]) end)
+      task =
+        Task.async(fn ->
+          Bulkhead.command(bh, ["BLPOP", "nonexistent_list_#{System.unique_integer()}", "2"])
+        end)
+
       Process.sleep(100)
 
       # This should be rejected immediately since the slot is occupied

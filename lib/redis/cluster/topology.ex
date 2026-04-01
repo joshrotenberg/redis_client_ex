@@ -9,7 +9,9 @@ defmodule Redis.Cluster.Topology do
   Parses the response from CLUSTER SLOTS into a list of
   `{slot_start, slot_end, primary_host, primary_port}` tuples.
   """
-  @spec parse_slots(list()) :: [{non_neg_integer(), non_neg_integer(), String.t(), non_neg_integer()}]
+  @spec parse_slots(list()) :: [
+          {non_neg_integer(), non_neg_integer(), String.t(), non_neg_integer()}
+        ]
   def parse_slots(slots_response) when is_list(slots_response) do
     Enum.flat_map(slots_response, fn
       [start_slot, end_slot, [host, port | _] | _replicas] when is_integer(start_slot) ->

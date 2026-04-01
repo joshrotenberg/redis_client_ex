@@ -36,7 +36,10 @@ defmodule Redis.Commands.TDigest do
   @spec merge(String.t(), [String.t()], keyword()) :: [String.t()]
   def merge(destkey, sources, opts \\ []) when is_list(sources) do
     cmd = ["TDIGEST.MERGE", destkey, to_string(length(sources)) | sources]
-    cmd = if opts[:compression], do: cmd ++ ["COMPRESSION", to_string(opts[:compression])], else: cmd
+
+    cmd =
+      if opts[:compression], do: cmd ++ ["COMPRESSION", to_string(opts[:compression])], else: cmd
+
     cmd = if opts[:override], do: cmd ++ ["OVERRIDE"], else: cmd
     cmd
   end

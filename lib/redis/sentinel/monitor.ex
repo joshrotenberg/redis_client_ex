@@ -66,7 +66,10 @@ defmodule Redis.Sentinel.Monitor do
   def handle_info(:connect, state) do
     case connect_and_subscribe(state) do
       {:ok, state} ->
-        Logger.debug("Redis.Sentinel.Monitor: subscribed to +switch-master on #{state.sentinel_host}:#{state.sentinel_port}")
+        Logger.debug(
+          "Redis.Sentinel.Monitor: subscribed to +switch-master on #{state.sentinel_host}:#{state.sentinel_port}"
+        )
+
         {:noreply, %{state | backoff_current: 1_000}}
 
       {:error, reason} ->
@@ -161,7 +164,11 @@ defmodule Redis.Sentinel.Monitor do
       [master_name, _old_ip, _old_port, new_ip, new_port] ->
         if master_name == state.group do
           port = String.to_integer(new_port)
-          Logger.info("Redis.Sentinel.Monitor: failover detected for #{master_name} → #{new_ip}:#{port}")
+
+          Logger.info(
+            "Redis.Sentinel.Monitor: failover detected for #{master_name} → #{new_ip}:#{port}"
+          )
+
           send(state.notify, {:failover, master_name, new_ip, port})
         end
 

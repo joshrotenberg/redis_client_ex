@@ -294,7 +294,14 @@ defmodule Redis.Sentinel do
             case verify_role(conn, state.role) do
               :ok ->
                 Logger.debug("Redis.Sentinel: connected to #{state.role} at #{host}:#{port}")
-                {:ok, %{state | conn: conn, current_addr: {host, port}, backoff_current: state.backoff_initial}}
+
+                {:ok,
+                 %{
+                   state
+                   | conn: conn,
+                     current_addr: {host, port},
+                     backoff_current: state.backoff_initial
+                 }}
 
               {:error, :wrong_role} ->
                 Connection.stop(conn)
@@ -449,7 +456,9 @@ defmodule Redis.Sentinel do
 
   defp parse_sentinels(sentinels) do
     Enum.map(sentinels, fn
-      {host, port} -> {host, port}
+      {host, port} ->
+        {host, port}
+
       str when is_binary(str) ->
         case String.split(str, ":") do
           [host, port_str] -> {host, String.to_integer(port_str)}

@@ -54,7 +54,9 @@ defmodule Redis.Commands.Stream do
     cmd
   end
 
-  @spec xclaim(String.t(), String.t(), String.t(), integer(), [String.t()], keyword()) :: [String.t()]
+  @spec xclaim(String.t(), String.t(), String.t(), integer(), [String.t()], keyword()) :: [
+          String.t()
+        ]
   def xclaim(key, group, consumer, min_idle_time, ids, opts \\ []) when is_list(ids) do
     cmd = ["XCLAIM", key, group, consumer, to_string(min_idle_time)] ++ ids
     cmd = if opts[:idle], do: cmd ++ ["IDLE", to_string(opts[:idle])], else: cmd
@@ -63,7 +65,9 @@ defmodule Redis.Commands.Stream do
     cmd
   end
 
-  @spec xautoclaim(String.t(), String.t(), String.t(), integer(), String.t(), keyword()) :: [String.t()]
+  @spec xautoclaim(String.t(), String.t(), String.t(), integer(), String.t(), keyword()) :: [
+          String.t()
+        ]
   def xautoclaim(key, group, consumer, min_idle_time, start, opts \\ []) do
     cmd = ["XAUTOCLAIM", key, group, consumer, to_string(min_idle_time), start]
     cmd = if opts[:count], do: cmd ++ ["COUNT", to_string(opts[:count])], else: cmd
@@ -128,7 +132,12 @@ defmodule Redis.Commands.Stream do
   @spec xsetid(String.t(), String.t(), keyword()) :: [String.t()]
   def xsetid(key, last_id, opts \\ []) do
     cmd = ["XSETID", key, last_id]
-    cmd = if opts[:entriesadded], do: cmd ++ ["ENTRIESADDED", to_string(opts[:entriesadded])], else: cmd
+
+    cmd =
+      if opts[:entriesadded],
+        do: cmd ++ ["ENTRIESADDED", to_string(opts[:entriesadded])],
+        else: cmd
+
     cmd = if opts[:maxdeletedid], do: cmd ++ ["MAXDELETEDID", opts[:maxdeletedid]], else: cmd
     cmd
   end

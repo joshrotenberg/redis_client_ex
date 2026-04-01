@@ -225,7 +225,9 @@ defmodule Redis.Commands.Search do
 
   defp prefix_args(nil), do: []
   defp prefix_args(prefix) when is_binary(prefix), do: ["PREFIX", "1", prefix]
-  defp prefix_args(prefixes) when is_list(prefixes), do: ["PREFIX", to_string(length(prefixes)) | prefixes]
+
+  defp prefix_args(prefixes) when is_list(prefixes),
+    do: ["PREFIX", to_string(length(prefixes)) | prefixes]
 
   defp filter_args(nil), do: []
   defp filter_args(expr), do: ["FILTER", expr]
@@ -238,7 +240,9 @@ defmodule Redis.Commands.Search do
 
   defp stopwords_args(nil), do: []
   defp stopwords_args(0), do: ["STOPWORDS", "0"]
-  defp stopwords_args(words) when is_list(words), do: ["STOPWORDS", to_string(length(words)) | words]
+
+  defp stopwords_args(words) when is_list(words),
+    do: ["STOPWORDS", to_string(length(words)) | words]
 
   defp nocontent_args(true), do: ["NOCONTENT"]
   defp nocontent_args(_), do: []
@@ -247,7 +251,9 @@ defmodule Redis.Commands.Search do
   defp verbatim_args(_), do: []
 
   defp return_args(nil), do: []
-  defp return_args(fields) when is_list(fields), do: ["RETURN", to_string(length(fields)) | fields]
+
+  defp return_args(fields) when is_list(fields),
+    do: ["RETURN", to_string(length(fields)) | fields]
 
   defp sortby_args(nil), do: []
   defp sortby_args({field, dir}), do: ["SORTBY", field, dir_str(dir)]
@@ -256,6 +262,7 @@ defmodule Redis.Commands.Search do
   defp limit_args({offset, count}), do: ["LIMIT", to_string(offset), to_string(count)]
 
   defp params_args(nil), do: []
+
   defp params_args(params) when is_list(params) do
     flat = Enum.flat_map(params, fn {name, value} -> [to_string(name), to_string(value)] end)
     ["PARAMS", to_string(length(params) * 2) | flat]
@@ -265,6 +272,7 @@ defmodule Redis.Commands.Search do
   defp dialect_args(v), do: ["DIALECT", to_string(v)]
 
   defp groupby_args(nil, _), do: []
+
   defp groupby_args(fields, reduces) when is_list(fields) do
     gb = ["GROUPBY", to_string(length(fields)) | fields]
     rb = Enum.flat_map(reduces || [], &reduce_arg/1)
@@ -281,6 +289,7 @@ defmodule Redis.Commands.Search do
   end
 
   defp agg_sortby_args(nil), do: []
+
   defp agg_sortby_args(fields) when is_list(fields) do
     flat = Enum.flat_map(fields, fn {field, dir} -> [field, dir_str(dir)] end)
     ["SORTBY", to_string(length(flat)) | flat]

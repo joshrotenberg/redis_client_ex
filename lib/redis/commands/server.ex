@@ -43,7 +43,10 @@ defmodule Redis.Commands.Server do
   def client_list(opts \\ []) do
     cmd = ["CLIENT", "LIST"]
     cmd = if opts[:type], do: cmd ++ ["TYPE", opts[:type]], else: cmd
-    cmd = if opts[:id], do: cmd ++ ["ID" | Enum.map(List.wrap(opts[:id]), &to_string/1)], else: cmd
+
+    cmd =
+      if opts[:id], do: cmd ++ ["ID" | Enum.map(List.wrap(opts[:id]), &to_string/1)], else: cmd
+
     cmd
   end
 
@@ -60,7 +63,12 @@ defmodule Redis.Commands.Server do
   def client_tracking(on_off, opts \\ []) do
     cmd = ["CLIENT", "TRACKING", if(on_off, do: "ON", else: "OFF")]
     cmd = if opts[:redirect], do: cmd ++ ["REDIRECT", to_string(opts[:redirect])], else: cmd
-    cmd = if opts[:prefix], do: cmd ++ Enum.flat_map(List.wrap(opts[:prefix]), fn p -> ["PREFIX", p] end), else: cmd
+
+    cmd =
+      if opts[:prefix],
+        do: cmd ++ Enum.flat_map(List.wrap(opts[:prefix]), fn p -> ["PREFIX", p] end),
+        else: cmd
+
     cmd = if opts[:bcast], do: cmd ++ ["BCAST"], else: cmd
     cmd = if opts[:optin], do: cmd ++ ["OPTIN"], else: cmd
     cmd = if opts[:optout], do: cmd ++ ["OPTOUT"], else: cmd
@@ -139,6 +147,7 @@ defmodule Redis.Commands.Server do
   @spec acl_log(keyword()) :: [String.t()]
   def acl_log(opts \\ []) do
     cmd = ["ACL", "LOG"]
+
     cond do
       opts[:reset] -> cmd ++ ["RESET"]
       opts[:count] -> cmd ++ [to_string(opts[:count])]
@@ -150,7 +159,8 @@ defmodule Redis.Commands.Server do
   def command_count, do: ["COMMAND", "COUNT"]
 
   @spec command_info([String.t()]) :: [String.t()]
-  def command_info(command_names) when is_list(command_names), do: ["COMMAND", "INFO" | command_names]
+  def command_info(command_names) when is_list(command_names),
+    do: ["COMMAND", "INFO" | command_names]
 
   @spec command_list(keyword()) :: [String.t()]
   def command_list(opts \\ []) do

@@ -22,7 +22,12 @@ defmodule Redis.Commands.Cuckoo do
   def reserve(key, capacity, opts \\ []) do
     cmd = ["CF.RESERVE", key, to_string(capacity)]
     cmd = if opts[:bucketsize], do: cmd ++ ["BUCKETSIZE", to_string(opts[:bucketsize])], else: cmd
-    cmd = if opts[:maxiterations], do: cmd ++ ["MAXITERATIONS", to_string(opts[:maxiterations])], else: cmd
+
+    cmd =
+      if opts[:maxiterations],
+        do: cmd ++ ["MAXITERATIONS", to_string(opts[:maxiterations])],
+        else: cmd
+
     cmd = if opts[:expansion], do: cmd ++ ["EXPANSION", to_string(opts[:expansion])], else: cmd
     cmd
   end

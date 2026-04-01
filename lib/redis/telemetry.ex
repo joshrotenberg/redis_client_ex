@@ -93,16 +93,23 @@ defmodule Redis.Telemetry do
   end
 
   defp handle_event([:redis_ex, :connection, :connect], measurements, metadata, _config) do
-    Logger.info("Redis connected to #{metadata.host}:#{metadata.port} in #{format_duration(measurements.duration)}")
+    Logger.info(
+      "Redis connected to #{metadata.host}:#{metadata.port} in #{format_duration(measurements.duration)}"
+    )
   end
 
   defp handle_event([:redis_ex, :connection, :disconnect], _measurements, metadata, _config) do
-    Logger.warning("Redis disconnected from #{metadata.host}:#{metadata.port}: #{inspect(metadata.reason)}")
+    Logger.warning(
+      "Redis disconnected from #{metadata.host}:#{metadata.port}: #{inspect(metadata.reason)}"
+    )
   end
 
   defp handle_event([:redis_ex, :pipeline, :stop], measurements, metadata, _config) do
     count = length(Map.get(metadata, :commands, []))
-    Logger.debug("Redis pipeline (#{count} commands) completed in #{format_duration(measurements.duration)}")
+
+    Logger.debug(
+      "Redis pipeline (#{count} commands) completed in #{format_duration(measurements.duration)}"
+    )
   end
 
   defp format_duration(duration) do

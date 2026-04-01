@@ -90,7 +90,9 @@ defmodule Redis.Connection do
 
     gen_opts = []
     gen_opts = if name, do: [{:name, name} | gen_opts], else: gen_opts
-    gen_opts = if hibernate_after, do: [{:hibernate_after, hibernate_after} | gen_opts], else: gen_opts
+
+    gen_opts =
+      if hibernate_after, do: [{:hibernate_after, hibernate_after} | gen_opts], else: gen_opts
 
     GenServer.start_link(__MODULE__, opts, gen_opts)
   end
@@ -341,7 +343,8 @@ defmodule Redis.Connection do
   defp connect(%{unix_socket: path} = state) when is_binary(path) do
     tcp_opts = [:binary, {:active, false}, {:packet, :raw}]
 
-    with {:ok, socket} <- :gen_tcp.connect({:local, String.to_charlist(path)}, 0, tcp_opts, state.timeout),
+    with {:ok, socket} <-
+           :gen_tcp.connect({:local, String.to_charlist(path)}, 0, tcp_opts, state.timeout),
          {:ok, state} <- handshake(%{state | socket: socket, state: :ready, buffer: <<>>}) do
       set_active(state, true)
       Logger.debug("Redis: connected to #{path}")

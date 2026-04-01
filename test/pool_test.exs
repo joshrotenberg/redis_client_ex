@@ -114,7 +114,9 @@ defmodule Redis.Connection.PoolTest do
 
       # The pool accepts 3-tuple messages for resilience compat
       assert {:ok, "PONG"} = GenServer.call(pool, {:command, ["PING"], []})
-      assert {:ok, ["OK", "PONG"]} = GenServer.call(pool, {:pipeline, [["SET", "x", "1"], ["PING"]], []})
+
+      assert {:ok, ["OK", "PONG"]} =
+               GenServer.call(pool, {:pipeline, [["SET", "x", "1"], ["PING"]], []})
 
       Pool.stop(pool)
     end

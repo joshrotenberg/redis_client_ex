@@ -9,7 +9,12 @@ defmodule Redis.Commands.TimeSeries do
     cmd = if opts[:retention], do: cmd ++ ["RETENTION", to_string(opts[:retention])], else: cmd
     cmd = if opts[:encoding], do: cmd ++ ["ENCODING", to_string(opts[:encoding])], else: cmd
     cmd = if opts[:chunk_size], do: cmd ++ ["CHUNK_SIZE", to_string(opts[:chunk_size])], else: cmd
-    cmd = if opts[:duplicate_policy], do: cmd ++ ["DUPLICATE_POLICY", to_string(opts[:duplicate_policy])], else: cmd
+
+    cmd =
+      if opts[:duplicate_policy],
+        do: cmd ++ ["DUPLICATE_POLICY", to_string(opts[:duplicate_policy])],
+        else: cmd
+
     cmd = append_labels(cmd, opts[:labels])
     cmd
   end
@@ -19,25 +24,42 @@ defmodule Redis.Commands.TimeSeries do
     cmd = ["TS.ALTER", key]
     cmd = if opts[:retention], do: cmd ++ ["RETENTION", to_string(opts[:retention])], else: cmd
     cmd = if opts[:chunk_size], do: cmd ++ ["CHUNK_SIZE", to_string(opts[:chunk_size])], else: cmd
-    cmd = if opts[:duplicate_policy], do: cmd ++ ["DUPLICATE_POLICY", to_string(opts[:duplicate_policy])], else: cmd
+
+    cmd =
+      if opts[:duplicate_policy],
+        do: cmd ++ ["DUPLICATE_POLICY", to_string(opts[:duplicate_policy])],
+        else: cmd
+
     cmd = append_labels(cmd, opts[:labels])
     cmd
   end
 
-  @spec ts_add(String.t(), String.t() | integer(), String.t() | number(), keyword()) :: [String.t()]
+  @spec ts_add(String.t(), String.t() | integer(), String.t() | number(), keyword()) :: [
+          String.t()
+        ]
   def ts_add(key, timestamp, value, opts \\ []) do
     cmd = ["TS.ADD", key, to_string(timestamp), to_string(value)]
     cmd = if opts[:retention], do: cmd ++ ["RETENTION", to_string(opts[:retention])], else: cmd
     cmd = if opts[:encoding], do: cmd ++ ["ENCODING", to_string(opts[:encoding])], else: cmd
     cmd = if opts[:chunk_size], do: cmd ++ ["CHUNK_SIZE", to_string(opts[:chunk_size])], else: cmd
-    cmd = if opts[:on_duplicate], do: cmd ++ ["ON_DUPLICATE", to_string(opts[:on_duplicate])], else: cmd
+
+    cmd =
+      if opts[:on_duplicate],
+        do: cmd ++ ["ON_DUPLICATE", to_string(opts[:on_duplicate])],
+        else: cmd
+
     cmd = append_labels(cmd, opts[:labels])
     cmd
   end
 
   @spec ts_madd([{String.t(), String.t() | integer(), String.t() | number()}]) :: [String.t()]
   def ts_madd(entries) when is_list(entries) do
-    ["TS.MADD" | Enum.flat_map(entries, fn {key, timestamp, value} -> [key, to_string(timestamp), to_string(value)] end)]
+    [
+      "TS.MADD"
+      | Enum.flat_map(entries, fn {key, timestamp, value} ->
+          [key, to_string(timestamp), to_string(value)]
+        end)
+    ]
   end
 
   @spec ts_incrby(String.t(), String.t() | number(), keyword()) :: [String.t()]
@@ -77,26 +99,34 @@ defmodule Redis.Commands.TimeSeries do
     cmd ++ ["FILTER" | filters]
   end
 
-  @spec ts_range(String.t(), String.t() | integer(), String.t() | integer(), keyword()) :: [String.t()]
+  @spec ts_range(String.t(), String.t() | integer(), String.t() | integer(), keyword()) :: [
+          String.t()
+        ]
   def ts_range(key, from, to, opts \\ []) do
     cmd = ["TS.RANGE", key, to_string(from), to_string(to)]
     append_range_opts(cmd, opts)
   end
 
-  @spec ts_revrange(String.t(), String.t() | integer(), String.t() | integer(), keyword()) :: [String.t()]
+  @spec ts_revrange(String.t(), String.t() | integer(), String.t() | integer(), keyword()) :: [
+          String.t()
+        ]
   def ts_revrange(key, from, to, opts \\ []) do
     cmd = ["TS.REVRANGE", key, to_string(from), to_string(to)]
     append_range_opts(cmd, opts)
   end
 
-  @spec ts_mrange(String.t() | integer(), String.t() | integer(), [String.t()], keyword()) :: [String.t()]
+  @spec ts_mrange(String.t() | integer(), String.t() | integer(), [String.t()], keyword()) :: [
+          String.t()
+        ]
   def ts_mrange(from, to, filters, opts \\ []) when is_list(filters) do
     cmd = ["TS.MRANGE", to_string(from), to_string(to)]
     cmd = append_mrange_opts(cmd, opts)
     cmd ++ ["FILTER" | filters]
   end
 
-  @spec ts_mrevrange(String.t() | integer(), String.t() | integer(), [String.t()], keyword()) :: [String.t()]
+  @spec ts_mrevrange(String.t() | integer(), String.t() | integer(), [String.t()], keyword()) :: [
+          String.t()
+        ]
   def ts_mrevrange(from, to, filters, opts \\ []) when is_list(filters) do
     cmd = ["TS.MREVRANGE", to_string(from), to_string(to)]
     cmd = append_mrange_opts(cmd, opts)
@@ -117,29 +147,83 @@ defmodule Redis.Commands.TimeSeries do
   # -- Private helpers -------------------------------------------------------
 
   defp append_labels(cmd, nil), do: cmd
+
   defp append_labels(cmd, labels) when is_map(labels) do
     cmd ++ ["LABELS" | Enum.flat_map(labels, fn {k, v} -> [to_string(k), to_string(v)] end)]
   end
+
   defp append_labels(cmd, labels) when is_list(labels) do
     cmd ++ ["LABELS" | Enum.flat_map(labels, fn {k, v} -> [to_string(k), to_string(v)] end)]
   end
 
   defp append_range_opts(cmd, opts) do
     cmd = if opts[:latest], do: cmd ++ ["LATEST"], else: cmd
-    cmd = if opts[:filter_by_ts], do: cmd ++ ["FILTER_BY_TS" | Enum.map(opts[:filter_by_ts], &to_string/1)], else: cmd
-    cmd = if opts[:filter_by_value], do: cmd ++ ["FILTER_BY_VALUE", to_string(elem(opts[:filter_by_value], 0)), to_string(elem(opts[:filter_by_value], 1))], else: cmd
+
+    cmd =
+      if opts[:filter_by_ts],
+        do: cmd ++ ["FILTER_BY_TS" | Enum.map(opts[:filter_by_ts], &to_string/1)],
+        else: cmd
+
+    cmd =
+      if opts[:filter_by_value],
+        do:
+          cmd ++
+            [
+              "FILTER_BY_VALUE",
+              to_string(elem(opts[:filter_by_value], 0)),
+              to_string(elem(opts[:filter_by_value], 1))
+            ],
+        else: cmd
+
     cmd = if opts[:count], do: cmd ++ ["COUNT", to_string(opts[:count])], else: cmd
-    cmd = if opts[:aggregation], do: cmd ++ ["AGGREGATION", to_string(elem(opts[:aggregation], 0)), to_string(elem(opts[:aggregation], 1))], else: cmd
+
+    cmd =
+      if opts[:aggregation],
+        do:
+          cmd ++
+            [
+              "AGGREGATION",
+              to_string(elem(opts[:aggregation], 0)),
+              to_string(elem(opts[:aggregation], 1))
+            ],
+        else: cmd
+
     cmd
   end
 
   defp append_mrange_opts(cmd, opts) do
     cmd = if opts[:latest], do: cmd ++ ["LATEST"], else: cmd
     cmd = if opts[:withlabels], do: cmd ++ ["WITHLABELS"], else: cmd
-    cmd = if opts[:filter_by_ts], do: cmd ++ ["FILTER_BY_TS" | Enum.map(opts[:filter_by_ts], &to_string/1)], else: cmd
-    cmd = if opts[:filter_by_value], do: cmd ++ ["FILTER_BY_VALUE", to_string(elem(opts[:filter_by_value], 0)), to_string(elem(opts[:filter_by_value], 1))], else: cmd
+
+    cmd =
+      if opts[:filter_by_ts],
+        do: cmd ++ ["FILTER_BY_TS" | Enum.map(opts[:filter_by_ts], &to_string/1)],
+        else: cmd
+
+    cmd =
+      if opts[:filter_by_value],
+        do:
+          cmd ++
+            [
+              "FILTER_BY_VALUE",
+              to_string(elem(opts[:filter_by_value], 0)),
+              to_string(elem(opts[:filter_by_value], 1))
+            ],
+        else: cmd
+
     cmd = if opts[:count], do: cmd ++ ["COUNT", to_string(opts[:count])], else: cmd
-    cmd = if opts[:aggregation], do: cmd ++ ["AGGREGATION", to_string(elem(opts[:aggregation], 0)), to_string(elem(opts[:aggregation], 1))], else: cmd
+
+    cmd =
+      if opts[:aggregation],
+        do:
+          cmd ++
+            [
+              "AGGREGATION",
+              to_string(elem(opts[:aggregation], 0)),
+              to_string(elem(opts[:aggregation], 1))
+            ],
+        else: cmd
+
     cmd
   end
 end
