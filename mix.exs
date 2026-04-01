@@ -22,7 +22,9 @@ defmodule RedisEx.MixProject do
   defp deps do
     [
       {:telemetry, "~> 1.0", optional: true},
-      {:redis_server_wrapper, path: "../redis_server_wrapper", only: :test}
+      {:redis_server_wrapper, path: "../redis_server_wrapper", only: [:test, :bench]},
+      {:redix, "~> 1.5", only: :bench},
+      {:benchee, "~> 1.0", only: :bench}
     ]
   end
 end
