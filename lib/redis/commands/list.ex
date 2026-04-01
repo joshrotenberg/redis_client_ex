@@ -91,4 +91,14 @@ defmodule Redis.Commands.List do
     cmd = ["BLMPOP", to_string(timeout), to_string(numkeys)] ++ keys ++ [direction]
     if opts[:count], do: cmd ++ ["COUNT", to_string(opts[:count])], else: cmd
   end
+
+  @doc "Deprecated: use lmove/4 instead."
+  @spec rpoplpush(String.t(), String.t()) :: [String.t()]
+  def rpoplpush(source, destination), do: ["RPOPLPUSH", source, destination]
+
+  @doc "Deprecated: use blmove/5 instead."
+  @spec brpoplpush(String.t(), String.t(), integer()) :: [String.t()]
+  def brpoplpush(source, destination, timeout) do
+    ["BRPOPLPUSH", source, destination, to_string(timeout)]
+  end
 end

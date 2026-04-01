@@ -125,6 +125,14 @@ defmodule Redis.Commands.Stream do
     if opts[:full], do: cmd ++ ["FULL"], else: cmd
   end
 
+  @spec xsetid(String.t(), String.t(), keyword()) :: [String.t()]
+  def xsetid(key, last_id, opts \\ []) do
+    cmd = ["XSETID", key, last_id]
+    cmd = if opts[:entriesadded], do: cmd ++ ["ENTRIESADDED", to_string(opts[:entriesadded])], else: cmd
+    cmd = if opts[:maxdeletedid], do: cmd ++ ["MAXDELETEDID", opts[:maxdeletedid]], else: cmd
+    cmd
+  end
+
   defp flatten_streams(streams) when is_list(streams) do
     {keys, ids} = Enum.unzip(streams)
     Enum.map(keys, &to_string/1) ++ Enum.map(ids, &to_string/1)

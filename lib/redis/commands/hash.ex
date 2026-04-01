@@ -64,4 +64,10 @@ defmodule Redis.Commands.Hash do
 
   @spec hstrlen(String.t(), String.t()) :: [String.t()]
   def hstrlen(key, field), do: ["HSTRLEN", key, field]
+
+  @doc "Deprecated: use hset/2 instead."
+  @spec hmset(String.t(), [{String.t(), String.t()}]) :: [String.t()]
+  def hmset(key, pairs) when is_list(pairs) do
+    ["HMSET", key | Enum.flat_map(pairs, fn {f, v} -> [f, to_string(v)] end)]
+  end
 end

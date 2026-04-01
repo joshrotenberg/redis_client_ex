@@ -71,4 +71,14 @@ defmodule Redis.Commands.Script do
 
   @spec function_stats() :: [String.t()]
   def function_stats, do: ["FUNCTION", "STATS"]
+
+  @spec fcall(String.t(), [String.t()], [String.t()]) :: [String.t()]
+  def fcall(function, keys \\ [], args \\ []) do
+    ["FCALL", function, to_string(length(keys))] ++ keys ++ args
+  end
+
+  @spec fcall_ro(String.t(), [String.t()], [String.t()]) :: [String.t()]
+  def fcall_ro(function, keys \\ [], args \\ []) do
+    ["FCALL_RO", function, to_string(length(keys))] ++ keys ++ args
+  end
 end

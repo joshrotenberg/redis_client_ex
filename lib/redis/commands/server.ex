@@ -173,4 +173,38 @@ defmodule Redis.Commands.Server do
 
   @spec object_help() :: [String.t()]
   def object_help, do: ["OBJECT", "HELP"]
+
+  @spec echo(String.t()) :: [String.t()]
+  def echo(message), do: ["ECHO", message]
+
+  @spec shutdown(keyword()) :: [String.t()]
+  def shutdown(opts \\ []) do
+    cmd = ["SHUTDOWN"]
+    cmd = if opts[:nosave], do: cmd ++ ["NOSAVE"], else: cmd
+    cmd = if opts[:save], do: cmd ++ ["SAVE"], else: cmd
+    cmd = if opts[:now], do: cmd ++ ["NOW"], else: cmd
+    cmd = if opts[:force], do: cmd ++ ["FORCE"], else: cmd
+    cmd
+  end
+
+  @spec latency_latest() :: [String.t()]
+  def latency_latest, do: ["LATENCY", "LATEST"]
+
+  @spec latency_history(String.t()) :: [String.t()]
+  def latency_history(event), do: ["LATENCY", "HISTORY", event]
+
+  @spec latency_reset(keyword()) :: [String.t()]
+  def latency_reset(opts \\ []) do
+    cmd = ["LATENCY", "RESET"]
+    if opts[:events], do: cmd ++ opts[:events], else: cmd
+  end
+
+  @spec waitaof(integer(), integer(), integer()) :: [String.t()]
+  def waitaof(numlocal, numreplicas, timeout) do
+    ["WAITAOF", to_string(numlocal), to_string(numreplicas), to_string(timeout)]
+  end
+
+  @doc "Deprecated: use replicaof/2 instead."
+  @spec slaveof(String.t(), integer()) :: [String.t()]
+  def slaveof(host, port), do: ["SLAVEOF", host, to_string(port)]
 end

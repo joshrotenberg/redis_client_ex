@@ -55,4 +55,34 @@ defmodule Redis.Commands.Geo do
     cmd = if opts[:storedist], do: cmd ++ ["STOREDIST"], else: cmd
     cmd
   end
+
+  @doc "Deprecated: use geosearch/2 instead."
+  @spec georadius(String.t(), float(), float(), float() | integer(), String.t(), keyword()) :: [String.t()]
+  def georadius(key, longitude, latitude, radius, unit, opts \\ []) do
+    cmd = ["GEORADIUS", key, to_string(longitude), to_string(latitude), to_string(radius), unit]
+    cmd = if opts[:withcoord], do: cmd ++ ["WITHCOORD"], else: cmd
+    cmd = if opts[:withdist], do: cmd ++ ["WITHDIST"], else: cmd
+    cmd = if opts[:withhash], do: cmd ++ ["WITHHASH"], else: cmd
+    cmd = if opts[:count], do: cmd ++ ["COUNT", to_string(opts[:count])], else: cmd
+    cmd = if opts[:asc], do: cmd ++ ["ASC"], else: cmd
+    cmd = if opts[:desc], do: cmd ++ ["DESC"], else: cmd
+    cmd = if opts[:store], do: cmd ++ ["STORE", opts[:store]], else: cmd
+    cmd = if opts[:storedist], do: cmd ++ ["STOREDIST", opts[:storedist]], else: cmd
+    cmd
+  end
+
+  @doc "Deprecated: use geosearch/2 instead."
+  @spec georadiusbymember(String.t(), String.t(), float() | integer(), String.t(), keyword()) :: [String.t()]
+  def georadiusbymember(key, member, radius, unit, opts \\ []) do
+    cmd = ["GEORADIUSBYMEMBER", key, member, to_string(radius), unit]
+    cmd = if opts[:withcoord], do: cmd ++ ["WITHCOORD"], else: cmd
+    cmd = if opts[:withdist], do: cmd ++ ["WITHDIST"], else: cmd
+    cmd = if opts[:withhash], do: cmd ++ ["WITHHASH"], else: cmd
+    cmd = if opts[:count], do: cmd ++ ["COUNT", to_string(opts[:count])], else: cmd
+    cmd = if opts[:asc], do: cmd ++ ["ASC"], else: cmd
+    cmd = if opts[:desc], do: cmd ++ ["DESC"], else: cmd
+    cmd = if opts[:store], do: cmd ++ ["STORE", opts[:store]], else: cmd
+    cmd = if opts[:storedist], do: cmd ++ ["STOREDIST", opts[:storedist]], else: cmd
+    cmd
+  end
 end

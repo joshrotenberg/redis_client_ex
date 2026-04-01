@@ -98,4 +98,8 @@ defmodule Redis.Commands.String do
     cmd = if opts[:withmatchlen], do: cmd ++ ["WITHMATCHLEN"], else: cmd
     cmd
   end
+
+  @doc "Deprecated: use getrange/3 instead."
+  @spec substr(String.t(), integer(), integer()) :: [String.t()]
+  def substr(key, start, stop), do: ["SUBSTR", key, to_string(start), to_string(stop)]
 end

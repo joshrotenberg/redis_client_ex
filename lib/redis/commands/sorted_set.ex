@@ -187,4 +187,22 @@ defmodule Redis.Commands.SortedSet do
 
   @spec zremrangebyscore(String.t(), String.t(), String.t()) :: [String.t()]
   def zremrangebyscore(key, min, max), do: ["ZREMRANGEBYSCORE", key, min, max]
+
+  @spec bzpopmax([String.t()], integer()) :: [String.t()]
+  def bzpopmax(keys, timeout) when is_list(keys), do: ["BZPOPMAX" | keys] ++ [to_string(timeout)]
+
+  @spec bzpopmin([String.t()], integer()) :: [String.t()]
+  def bzpopmin(keys, timeout) when is_list(keys), do: ["BZPOPMIN" | keys] ++ [to_string(timeout)]
+
+  @spec bzmpop(integer(), integer(), [String.t()], String.t(), keyword()) :: [String.t()]
+  def bzmpop(timeout, numkeys, keys, direction, opts \\ []) when is_list(keys) do
+    cmd = ["BZMPOP", to_string(timeout), to_string(numkeys)] ++ keys ++ [direction]
+    if opts[:count], do: cmd ++ ["COUNT", to_string(opts[:count])], else: cmd
+  end
+
+  @spec zrevrangebylex(String.t(), String.t(), String.t(), keyword()) :: [String.t()]
+  def zrevrangebylex(key, max, min, opts \\ []) do
+    cmd = ["ZREVRANGEBYLEX", key, max, min]
+    if opts[:limit], do: cmd ++ ["LIMIT", to_string(elem(opts[:limit], 0)), to_string(elem(opts[:limit], 1))], else: cmd
+  end
 end
