@@ -6,7 +6,7 @@ defmodule Redis.Cluster.RouterTest do
   describe "slot/1" do
     test "returns a slot in range 0-16383" do
       slot = Router.slot("mykey")
-      assert slot >= 0 and slot < 16384
+      assert slot >= 0 and slot < 16_384
     end
 
     test "same key always returns same slot" do
@@ -31,7 +31,7 @@ defmodule Redis.Cluster.RouterTest do
 
     test "known CRC16 values" do
       # Verified against redis-cli CLUSTER KEYSLOT
-      assert Router.slot("foo") == 12182
+      assert Router.slot("foo") == 12_182
       assert Router.slot("bar") == 5061
       assert Router.slot("hello") == 866
     end

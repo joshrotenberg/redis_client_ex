@@ -11,7 +11,7 @@ defmodule Redis.SentinelTest do
         master_port: 6500,
         replicas: 1,
         sentinels: 3,
-        sentinel_base_port: 26400
+        sentinel_base_port: 26_400
       )
 
     assert RedisServerWrapper.Sentinel.healthy?(sentinel_srv)
@@ -33,7 +33,7 @@ defmodule Redis.SentinelTest do
     test "connects to primary via sentinel" do
       {:ok, conn} =
         Sentinel.start_link(
-          sentinels: [{"127.0.0.1", 26400}, {"127.0.0.1", 26401}, {"127.0.0.1", 26402}],
+          sentinels: [{"127.0.0.1", 26_400}, {"127.0.0.1", 26_401}, {"127.0.0.1", 26_402}],
           group: "mymaster"
         )
 
@@ -51,7 +51,7 @@ defmodule Redis.SentinelTest do
     test "SET and GET through sentinel" do
       {:ok, conn} =
         Sentinel.start_link(
-          sentinels: [{"127.0.0.1", 26400}],
+          sentinels: [{"127.0.0.1", 26_400}],
           group: "mymaster"
         )
 
@@ -64,7 +64,7 @@ defmodule Redis.SentinelTest do
     test "pipeline through sentinel" do
       {:ok, conn} =
         Sentinel.start_link(
-          sentinels: [{"127.0.0.1", 26400}],
+          sentinels: [{"127.0.0.1", 26_400}],
           group: "mymaster"
         )
 
@@ -83,7 +83,7 @@ defmodule Redis.SentinelTest do
     test "transaction through sentinel" do
       {:ok, conn} =
         Sentinel.start_link(
-          sentinels: [{"127.0.0.1", 26400}],
+          sentinels: [{"127.0.0.1", 26_400}],
           group: "mymaster"
         )
 

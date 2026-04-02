@@ -3,7 +3,7 @@ defmodule Redis.ResilienceTest do
 
   alias Redis.Connection
   alias Redis.Resilience
-  alias Redis.Resilience.{CircuitBreaker, Retry, Coalesce, Bulkhead}
+  alias Redis.Resilience.{Bulkhead, CircuitBreaker, Coalesce, Retry}
 
   # Uses redis-server on port 6398 from test_helper.exs
 

@@ -1,8 +1,8 @@
 defmodule Redis.ScriptTest do
   use ExUnit.Case, async: false
 
-  alias Redis.Script
   alias Redis.Connection
+  alias Redis.Script
 
   # Uses redis-server on port 6398 from test_helper.exs
 

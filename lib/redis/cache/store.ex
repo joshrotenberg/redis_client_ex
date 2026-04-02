@@ -24,7 +24,7 @@ defmodule Redis.Cache.Store do
   end
 
   @doc "Gets a value from the cache. Returns `{:hit, value, store}` or `{:miss, store}`."
-  @spec get(t(), String.t()) :: {:hit, term(), t()} | {:miss, t()}
+  @spec get(t(), term()) :: {:hit, term(), t()} | {:miss, t()}
   def get(%__MODULE__{} = store, key) do
     case :ets.lookup(store.table, key) do
       [{^key, value, expires_at}] ->
@@ -41,7 +41,7 @@ defmodule Redis.Cache.Store do
   end
 
   @doc "Puts a value in the cache with optional TTL in milliseconds."
-  @spec put(t(), String.t(), term(), non_neg_integer() | nil) :: t()
+  @spec put(t(), term(), term(), non_neg_integer() | nil) :: t()
   def put(%__MODULE__{} = store, key, value, ttl_ms \\ nil) do
     expires_at =
       if ttl_ms do

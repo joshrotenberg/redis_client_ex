@@ -9,7 +9,7 @@ defmodule Redis.Commands.TimeSeriesTest do
     end
 
     test "with retention" do
-      assert TimeSeries.ts_create("ts", retention: 60000) ==
+      assert TimeSeries.ts_create("ts", retention: 60_000) ==
                ["TS.CREATE", "ts", "RETENTION", "60000"]
     end
 
@@ -45,7 +45,7 @@ defmodule Redis.Commands.TimeSeriesTest do
     end
 
     test "with retention" do
-      assert TimeSeries.ts_alter("ts", retention: 30000) ==
+      assert TimeSeries.ts_alter("ts", retention: 30_000) ==
                ["TS.ALTER", "ts", "RETENTION", "30000"]
     end
   end

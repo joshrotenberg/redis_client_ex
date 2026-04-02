@@ -44,8 +44,8 @@ defmodule Redis.Cache do
 
   use GenServer
 
-  alias Redis.Connection
   alias Redis.Cache.Store
+  alias Redis.Connection
 
   require Logger
 
@@ -165,48 +165,13 @@ defmodule Redis.Cache do
   end
 
   def handle_call({:cached_mget, keys}, _from, state) do
-    # Check cache for each key
-    {cached, missed_keys, missed_indices, store} =
-      keys
-      |> Enum.with_index()
-      |> Enum.reduce({%{}, [], [], state.store}, fn {key, idx},
-                                                    {cached, missed_k, missed_i, st} ->
-        case Store.get(st, key) do
-          {:hit, value, st} -> {Map.put(cached, idx, value), missed_k, missed_i, st}
-          {:miss, st} -> {cached, [key | missed_k], [idx | missed_i], st}
-        end
-      end)
+    {cached, missed_keys, missed_indices, store} = check_cache_for_keys(keys, state.store)
 
     if missed_keys == [] do
-      # All cached
       values = Enum.map(0..(length(keys) - 1), &Map.get(cached, &1))
       {:reply, {:ok, values}, %{state | store: store}}
     else
-      # Fetch missing from Redis
-      missed_keys = Enum.reverse(missed_keys)
-      missed_indices = Enum.reverse(missed_indices)
-
-      case Connection.command(state.conn, ["MGET" | missed_keys]) do
-        {:ok, fetched} when is_list(fetched) ->
-          # Cache the fetched values
-          store =
-            Enum.zip(missed_keys, fetched)
-            |> Enum.reduce(store, fn {key, value}, st ->
-              Store.put(st, key, value, state.ttl)
-            end)
-
-          # Merge cached and fetched
-          fetched_map =
-            Enum.zip(missed_indices, fetched) |> Map.new()
-
-          all = Map.merge(cached, fetched_map)
-          values = Enum.map(0..(length(keys) - 1), &Map.get(all, &1))
-
-          {:reply, {:ok, values}, %{state | store: store}}
-
-        error ->
-          {:reply, error, %{state | store: store}}
-      end
+      fetch_and_merge_mget(keys, cached, missed_keys, missed_indices, store, state)
     end
   end
 
@@ -246,23 +211,7 @@ defmodule Redis.Cache do
   @impl true
   def handle_info({:redis_push, :invalidate, keys}, state) do
     store = Store.invalidate(state.store, keys)
-
-    # If any invalidated key was a hgetall ref, also invalidate that
-    store =
-      if keys do
-        Enum.reduce(keys, store, fn key, st ->
-          case :ets.lookup(st.table, key) do
-            [{^key, {:hgetall_ref, cache_key}, _}] ->
-              Store.invalidate(st, [cache_key])
-
-            _ ->
-              st
-          end
-        end)
-      else
-        store
-      end
-
+    store = invalidate_hgetall_refs(store, keys)
     {:noreply, %{state | store: store}}
   end
 
@@ -300,4 +249,52 @@ defmodule Redis.Cache do
   defp normalize_optin_result({:ok, [_caching, value]}, true), do: {:ok, value}
   defp normalize_optin_result(result, false), do: result
   defp normalize_optin_result(error, _), do: error
+
+  defp check_cache_for_keys(keys, store) do
+    keys
+    |> Enum.with_index()
+    |> Enum.reduce({%{}, [], [], store}, fn {key, idx}, {cached, missed_k, missed_i, st} ->
+      case Store.get(st, key) do
+        {:hit, value, st} -> {Map.put(cached, idx, value), missed_k, missed_i, st}
+        {:miss, st} -> {cached, [key | missed_k], [idx | missed_i], st}
+      end
+    end)
+  end
+
+  defp fetch_and_merge_mget(keys, cached, missed_keys, missed_indices, store, state) do
+    missed_keys = Enum.reverse(missed_keys)
+    missed_indices = Enum.reverse(missed_indices)
+
+    case Connection.command(state.conn, ["MGET" | missed_keys]) do
+      {:ok, fetched} when is_list(fetched) ->
+        store =
+          Enum.zip(missed_keys, fetched)
+          |> Enum.reduce(store, fn {key, value}, st ->
+            Store.put(st, key, value, state.ttl)
+          end)
+
+        fetched_map = Enum.zip(missed_indices, fetched) |> Map.new()
+        all = Map.merge(cached, fetched_map)
+        values = Enum.map(0..(length(keys) - 1), &Map.get(all, &1))
+
+        {:reply, {:ok, values}, %{state | store: store}}
+
+      error ->
+        {:reply, error, %{state | store: store}}
+    end
+  end
+
+  defp invalidate_hgetall_refs(store, nil), do: store
+
+  defp invalidate_hgetall_refs(store, keys) do
+    Enum.reduce(keys, store, fn key, st ->
+      case :ets.lookup(st.table, key) do
+        [{^key, {:hgetall_ref, cache_key}, _}] ->
+          Store.invalidate(st, [cache_key])
+
+        _ ->
+          st
+      end
+    end)
+  end
 end

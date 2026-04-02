@@ -44,7 +44,7 @@ defmodule Redis.Resilience do
   use GenServer
 
   alias Redis.Connection
-  alias Redis.Resilience.{CircuitBreaker, Retry, Coalesce, Bulkhead}
+  alias Redis.Resilience.{Bulkhead, CircuitBreaker, Coalesce, Retry}
 
   require Logger
 
@@ -219,10 +219,8 @@ defmodule Redis.Resilience do
   end
 
   defp safe_stop(pid) do
-    try do
-      GenServer.stop(pid, :normal)
-    catch
-      :exit, _ -> :ok
-    end
+    GenServer.stop(pid, :normal)
+  catch
+    :exit, _ -> :ok
   end
 end

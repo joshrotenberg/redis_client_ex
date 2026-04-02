@@ -63,26 +63,24 @@ defmodule Redis.Cluster.Scan do
     Stream.resource(
       fn -> "0" end,
       fn
-        :done ->
-          {:halt, :done}
-
-        cursor ->
-          cmd = build_scan_cmd(cursor, match, count, type)
-
-          case Connection.command(conn, cmd) do
-            {:ok, [next_cursor, keys]} ->
-              next = if next_cursor == "0", do: :done, else: next_cursor
-              {keys, next}
-
-            {:ok, _other} ->
-              {[], :done}
-
-            {:error, _} ->
-              {[], :done}
-          end
+        :done -> {:halt, :done}
+        cursor -> scan_next(conn, cursor, match, count, type)
       end,
       fn _ -> :ok end
     )
+  end
+
+  defp scan_next(conn, cursor, match, count, type) do
+    cmd = build_scan_cmd(cursor, match, count, type)
+
+    case Connection.command(conn, cmd) do
+      {:ok, [next_cursor, keys]} ->
+        next = if next_cursor == "0", do: :done, else: next_cursor
+        {keys, next}
+
+      _ ->
+        {[], :done}
+    end
   end
 
   defp build_scan_cmd(cursor, match, count, type) do

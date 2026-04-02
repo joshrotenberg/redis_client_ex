@@ -36,8 +36,8 @@ defmodule Redis.PubSub.Sharded do
 
   use GenServer
 
-  alias Redis.Connection
   alias Redis.Cluster.{Router, Topology}
+  alias Redis.Connection
   alias Redis.Protocol.RESP2
 
   require Logger
@@ -135,39 +135,14 @@ defmodule Redis.PubSub.Sharded do
   def handle_call({:ssubscribe, channel, subscriber}, _from, state) do
     slot = Router.slot(channel)
 
-    case node_for_slot(state, slot) do
-      {:ok, node_addr} ->
-        case ensure_pubsub_socket(state, node_addr) do
-          {:ok, state} ->
-            # Monitor subscriber
-            state = monitor_subscriber(state, subscriber)
-
-            # Track subscription
-            subs = Map.get(state.channels, channel, MapSet.new()) |> MapSet.put(subscriber)
-            state = %{state | channels: Map.put(state.channels, channel, subs)}
-
-            # Track which node owns this channel
-            state = %{state | channel_node: Map.put(state.channel_node, channel, node_addr)}
-
-            # Send SSUBSCRIBE only if this is the first subscriber for this channel
-            if MapSet.size(subs) == 1 do
-              socket = Map.fetch!(state.node_sockets, node_addr)
-              data = RESP2.encode(["SSUBSCRIBE", channel])
-
-              case :gen_tcp.send(socket, data) do
-                :ok -> {:reply, :ok, state}
-                {:error, reason} -> {:reply, {:error, reason}, state}
-              end
-            else
-              {:reply, :ok, state}
-            end
-
-          {:error, reason} ->
-            {:reply, {:error, reason}, state}
-        end
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
+    with {:ok, node_addr} <- node_for_slot(state, slot),
+         {:ok, state} <- ensure_pubsub_socket(state, node_addr) do
+      state = track_subscription(state, channel, subscriber, node_addr)
+      subs = Map.fetch!(state.channels, channel)
+      reply = maybe_send_ssubscribe(state, channel, subs, node_addr)
+      {:reply, reply, state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
@@ -178,35 +153,8 @@ defmodule Redis.PubSub.Sharded do
 
       subs ->
         new_subs = MapSet.delete(subs, subscriber)
-
-        if MapSet.size(new_subs) == 0 do
-          # Last subscriber -- send SUNSUBSCRIBE to Redis
-          node_addr = Map.get(state.channel_node, channel)
-
-          if node_addr do
-            case Map.get(state.node_sockets, node_addr) do
-              nil ->
-                :ok
-
-              socket ->
-                data = RESP2.encode(["SUNSUBSCRIBE", channel])
-                :gen_tcp.send(socket, data)
-            end
-          end
-
-          state = %{
-            state
-            | channels: Map.delete(state.channels, channel),
-              channel_node: Map.delete(state.channel_node, channel)
-          }
-
-          state = maybe_demonitor(state, subscriber)
-          {:reply, :ok, state}
-        else
-          state = %{state | channels: Map.put(state.channels, channel, new_subs)}
-          state = maybe_demonitor(state, subscriber)
-          {:reply, :ok, state}
-        end
+        state = apply_unsubscribe(state, channel, new_subs, subscriber)
+        {:reply, :ok, state}
     end
   end
 
@@ -265,6 +213,59 @@ defmodule Redis.PubSub.Sharded do
   end
 
   # -------------------------------------------------------------------
+  # Subscription tracking helpers
+  # -------------------------------------------------------------------
+
+  defp track_subscription(state, channel, subscriber, node_addr) do
+    state = monitor_subscriber(state, subscriber)
+    subs = Map.get(state.channels, channel, MapSet.new()) |> MapSet.put(subscriber)
+    state = %{state | channels: Map.put(state.channels, channel, subs)}
+    %{state | channel_node: Map.put(state.channel_node, channel, node_addr)}
+  end
+
+  defp maybe_send_ssubscribe(state, channel, subs, node_addr) do
+    if MapSet.size(subs) == 1 do
+      socket = Map.fetch!(state.node_sockets, node_addr)
+      data = RESP2.encode(["SSUBSCRIBE", channel])
+
+      case :gen_tcp.send(socket, data) do
+        :ok -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp apply_unsubscribe(state, channel, new_subs, subscriber) do
+    if MapSet.size(new_subs) == 0 do
+      send_sunsubscribe(state, channel)
+
+      state = %{
+        state
+        | channels: Map.delete(state.channels, channel),
+          channel_node: Map.delete(state.channel_node, channel)
+      }
+
+      maybe_demonitor(state, subscriber)
+    else
+      state = %{state | channels: Map.put(state.channels, channel, new_subs)}
+      maybe_demonitor(state, subscriber)
+    end
+  end
+
+  defp send_sunsubscribe(state, channel) do
+    node_addr = Map.get(state.channel_node, channel)
+
+    if node_addr do
+      case Map.get(state.node_sockets, node_addr) do
+        nil -> :ok
+        socket -> :gen_tcp.send(socket, RESP2.encode(["SUNSUBSCRIBE", channel]))
+      end
+    end
+  end
+
+  # -------------------------------------------------------------------
   # Topology discovery
   # -------------------------------------------------------------------
 
@@ -272,29 +273,31 @@ defmodule Redis.PubSub.Sharded do
     nodes = effective_seed_nodes(state)
 
     Enum.reduce_while(nodes, {:error, :no_reachable_node}, fn {host, port}, _acc ->
-      conn_opts =
-        [host: host, port: port, timeout: state.timeout]
-        |> maybe_put(:password, state.password)
-
-      case Connection.start_link(conn_opts) do
-        {:ok, conn} ->
-          case Connection.command(conn, ["CLUSTER", "SLOTS"]) do
-            {:ok, slots_data} ->
-              parsed = Topology.parse_slots(slots_data)
-              slot_map = build_slot_lookup(parsed)
-
-              Connection.stop(conn)
-              {:halt, {:ok, %{state | slot_map: slot_map}}}
-
-            {:error, reason} ->
-              Connection.stop(conn)
-              {:cont, {:error, reason}}
-          end
-
-        {:error, _reason} ->
-          {:cont, {:error, :no_reachable_node}}
+      case fetch_slots_from_node(state, host, port) do
+        {:ok, slot_map} -> {:halt, {:ok, %{state | slot_map: slot_map}}}
+        {:error, reason} -> {:cont, {:error, reason}}
       end
     end)
+  end
+
+  defp fetch_slots_from_node(state, host, port) do
+    conn_opts =
+      [host: host, port: port, timeout: state.timeout]
+      |> maybe_put(:password, state.password)
+
+    case Connection.start_link(conn_opts) do
+      {:ok, conn} ->
+        result = Connection.command(conn, ["CLUSTER", "SLOTS"])
+        Connection.stop(conn)
+
+        case result do
+          {:ok, slots_data} -> {:ok, build_slot_lookup(Topology.parse_slots(slots_data))}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, _reason} ->
+        {:error, :no_reachable_node}
+    end
   end
 
   defp effective_seed_nodes(%{cluster: pid} = _state) when is_pid(pid) do
@@ -327,37 +330,33 @@ defmodule Redis.PubSub.Sharded do
   # Per-node pub/sub socket management
   # -------------------------------------------------------------------
 
-  defp ensure_pubsub_socket(state, {host, port} = node_addr) do
+  defp ensure_pubsub_socket(state, node_addr) do
     if Map.has_key?(state.node_sockets, node_addr) do
       {:ok, state}
     else
-      tcp_opts = [:binary, active: false, packet: :raw, nodelay: true]
-      charlist_host = String.to_charlist(host)
+      open_pubsub_socket(state, node_addr)
+    end
+  end
 
-      case :gen_tcp.connect(charlist_host, port, tcp_opts, state.timeout) do
-        {:ok, socket} ->
-          case maybe_auth_socket(socket, state) do
-            :ok ->
-              :inet.setopts(socket, active: true)
-              socket_port = :erlang.port_info(socket, :id) |> elem(1)
+  defp open_pubsub_socket(state, {host, port} = node_addr) do
+    tcp_opts = [:binary, active: false, packet: :raw, nodelay: true]
+    charlist_host = String.to_charlist(host)
 
-              state = %{
-                state
-                | node_sockets: Map.put(state.node_sockets, node_addr, socket),
-                  node_buffers: Map.put(state.node_buffers, node_addr, <<>>),
-                  socket_to_node: Map.put(state.socket_to_node, socket_port, node_addr)
-              }
+    with {:ok, socket} <- :gen_tcp.connect(charlist_host, port, tcp_opts, state.timeout),
+         :ok <- maybe_auth_socket(socket, state) do
+      :inet.setopts(socket, active: true)
+      socket_port = :erlang.port_info(socket, :id) |> elem(1)
 
-              {:ok, state}
+      state = %{
+        state
+        | node_sockets: Map.put(state.node_sockets, node_addr, socket),
+          node_buffers: Map.put(state.node_buffers, node_addr, <<>>),
+          socket_to_node: Map.put(state.socket_to_node, socket_port, node_addr)
+      }
 
-            {:error, reason} ->
-              :gen_tcp.close(socket)
-              {:error, reason}
-          end
-
-        {:error, reason} ->
-          {:error, reason}
-      end
+      {:ok, state}
+    else
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -449,7 +448,9 @@ defmodule Redis.PubSub.Sharded do
   defp maybe_demonitor(state, pid) do
     in_channels = Enum.any?(state.channels, fn {_ch, subs} -> MapSet.member?(subs, pid) end)
 
-    if not in_channels do
+    if in_channels do
+      state
+    else
       case Map.pop(state.monitors, pid) do
         {nil, _} ->
           state
@@ -458,40 +459,15 @@ defmodule Redis.PubSub.Sharded do
           Process.demonitor(ref, [:flush])
           %{state | monitors: monitors}
       end
-    else
-      state
     end
   end
 
   defp remove_subscriber(state, pid, ref) do
     Process.demonitor(ref, [:flush])
 
-    {channels, channels_to_unsub} =
-      Enum.reduce(state.channels, {%{}, []}, fn {ch, subs}, {chs, unsub} ->
-        new_subs = MapSet.delete(subs, pid)
+    {channels, channels_to_unsub} = partition_channels_by_subscriber(state.channels, pid)
 
-        if MapSet.size(new_subs) == 0 do
-          {chs, [ch | unsub]}
-        else
-          {Map.put(chs, ch, new_subs), unsub}
-        end
-      end)
-
-    # Send SUNSUBSCRIBE for channels with no remaining subscribers
-    Enum.each(channels_to_unsub, fn ch ->
-      node_addr = Map.get(state.channel_node, ch)
-
-      if node_addr do
-        case Map.get(state.node_sockets, node_addr) do
-          nil ->
-            :ok
-
-          socket ->
-            data = RESP2.encode(["SUNSUBSCRIBE", ch])
-            :gen_tcp.send(socket, data)
-        end
-      end
-    end)
+    Enum.each(channels_to_unsub, fn ch -> send_sunsubscribe(state, ch) end)
 
     channel_node =
       Enum.reduce(channels_to_unsub, state.channel_node, fn ch, acc ->
@@ -504,6 +480,18 @@ defmodule Redis.PubSub.Sharded do
         channel_node: channel_node,
         monitors: Map.delete(state.monitors, pid)
     }
+  end
+
+  defp partition_channels_by_subscriber(channels, pid) do
+    Enum.reduce(channels, {%{}, []}, fn {ch, subs}, {chs, unsub} ->
+      new_subs = MapSet.delete(subs, pid)
+
+      if MapSet.size(new_subs) == 0 do
+        {chs, [ch | unsub]}
+      else
+        {Map.put(chs, ch, new_subs), unsub}
+      end
+    end)
   end
 
   # -------------------------------------------------------------------

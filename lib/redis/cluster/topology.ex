@@ -15,8 +15,7 @@ defmodule Redis.Cluster.Topology do
   def parse_slots(slots_response) when is_list(slots_response) do
     Enum.flat_map(slots_response, fn
       [start_slot, end_slot, [host, port | _] | _replicas] when is_integer(start_slot) ->
-        host = if host == "", do: "127.0.0.1", else: host
-        [{start_slot, end_slot, host, port}]
+        [{start_slot, end_slot, normalize_host(host), port}]
 
       _ ->
         []
@@ -32,18 +31,9 @@ defmodule Redis.Cluster.Topology do
   def parse_slots_with_replicas(slots_response) when is_list(slots_response) do
     Enum.flat_map(slots_response, fn
       [start_slot, end_slot, [host, port | _] | rest] when is_integer(start_slot) ->
-        host = if host == "", do: "127.0.0.1", else: host
+        host = normalize_host(host)
         primary = {host, port}
-
-        replicas =
-          rest
-          |> Enum.filter(&is_list/1)
-          |> Enum.map(fn
-            [rhost, rport | _] ->
-              rhost = if rhost == "", do: "127.0.0.1", else: rhost
-              {rhost, rport}
-          end)
-
+        replicas = parse_replicas(rest)
         [{start_slot, end_slot, primary, replicas}]
 
       _ ->
@@ -70,14 +60,21 @@ defmodule Redis.Cluster.Topology do
   @spec build_replica_map([{non_neg_integer(), non_neg_integer(), node_addr(), [node_addr()]}]) ::
           [{non_neg_integer(), [node_addr()]}]
   def build_replica_map(parsed_slots) do
-    Enum.flat_map(parsed_slots, fn {start_slot, end_slot, _primary, replicas} ->
-      if replicas != [] do
-        for slot <- start_slot..end_slot do
-          {slot, replicas}
-        end
-      else
-        []
+    parsed_slots
+    |> Enum.filter(fn {_start, _end, _primary, replicas} -> replicas != [] end)
+    |> Enum.flat_map(fn {start_slot, end_slot, _primary, replicas} ->
+      for slot <- start_slot..end_slot do
+        {slot, replicas}
       end
     end)
+  end
+
+  defp normalize_host(""), do: "127.0.0.1"
+  defp normalize_host(host), do: host
+
+  defp parse_replicas(rest) do
+    rest
+    |> Enum.filter(&is_list/1)
+    |> Enum.map(fn [rhost, rport | _] -> {normalize_host(rhost), rport} end)
   end
 end

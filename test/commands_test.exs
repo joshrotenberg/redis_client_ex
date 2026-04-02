@@ -1,7 +1,7 @@
 defmodule Redis.CommandsTest do
   use ExUnit.Case, async: true
 
-  alias Redis.Commands.{String, Hash, List, Set, SortedSet, Key, Stream, Server}
+  alias Redis.Commands.{Hash, Key, List, Server, Set, SortedSet, Stream, String}
 
   describe "String commands" do
     test "GET" do

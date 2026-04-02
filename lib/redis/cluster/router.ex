@@ -5,7 +5,7 @@ defmodule Redis.Cluster.Router do
   Computes CRC16 hash slots and extracts keys from commands for routing.
   """
 
-  @hash_slots 16384
+  @hash_slots 16_384
 
   @doc "Computes the hash slot for a key."
   @spec slot(String.t()) :: non_neg_integer()

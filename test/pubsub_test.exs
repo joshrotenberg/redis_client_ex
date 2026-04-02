@@ -1,8 +1,8 @@
 defmodule Redis.PubSubTest do
   use ExUnit.Case, async: false
 
-  alias Redis.PubSub
   alias Redis.Connection
+  alias Redis.PubSub
 
   # Uses redis-server on port 6398 (no auth) from test_helper.exs
 
