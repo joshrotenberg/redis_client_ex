@@ -1,13 +1,48 @@
 defmodule Redis.Commands.Script do
   @moduledoc """
-  Command builders for Redis scripting and function operations.
+  Command builders for Redis Lua scripting and Redis Functions.
+
+  This module covers two related subsystems:
+
+    * **Lua scripting** -- `EVAL`, `EVALSHA`, and `SCRIPT *` commands for
+      running ad-hoc Lua scripts on the server.
+    * **Redis Functions** (Redis 7+) -- `FCALL`, `FCALL_RO`, and `FUNCTION *`
+      commands for managing and invoking persistent, named functions.
+
+  All functions are pure and return a command list for use with
+  `Redis.command/2` or `Redis.pipeline/2`.
+
+  ## Examples
+
+      # Evaluate a Lua script that increments a key by a given amount
+      Redis.command(conn, Script.eval("return redis.call('INCRBY', KEYS[1], ARGV[1])", ["counter"], ["5"]))
+
+      # Call a previously loaded function
+      Redis.command(conn, Script.fcall("myfunc", ["key1"], ["arg1", "arg2"]))
+
+      # Load a function library (Redis 7+)
+      Redis.command(conn, Script.function_load("#!lua name=mylib\\nredis.register_function('myfunc', function(keys, args) return keys[1] end)"))
   """
 
+  @doc """
+  EVAL -- evaluate a Lua script on the server.
+
+  The `keys` list is passed as KEYS and `args` as ARGV inside the script.
+  The number of keys is computed automatically.
+
+      Script.eval("return redis.call('SET', KEYS[1], ARGV[1])", ["mykey"], ["myval"])
+      #=> ["EVAL", "return redis.call('SET', KEYS[1], ARGV[1])", "1", "mykey", "myval"]
+  """
   @spec eval(String.t(), [String.t()], [String.t()]) :: [String.t()]
   def eval(script, keys \\ [], args \\ []) do
     ["EVAL", script, to_string(length(keys))] ++ keys ++ args
   end
 
+  @doc """
+  EVALSHA -- evaluate a cached Lua script by its SHA1 digest.
+
+  Use `script_load/1` first to cache the script and obtain its SHA1.
+  """
   @spec evalsha(String.t(), [String.t()], [String.t()]) :: [String.t()]
   def evalsha(sha1, keys \\ [], args \\ []) do
     ["EVALSHA", sha1, to_string(length(keys))] ++ keys ++ args
@@ -37,6 +72,14 @@ defmodule Redis.Commands.Script do
   @spec script_load(String.t()) :: [String.t()]
   def script_load(script), do: ["SCRIPT", "LOAD", script]
 
+  @doc """
+  FUNCTION LOAD -- load a function library into Redis (Redis 7+).
+
+  Pass `replace: true` to overwrite an existing library with the same name.
+
+      Script.function_load("#!lua name=mylib\\nredis.register_function('myfunc', function(keys, args) return 'ok' end)")
+      Script.function_load(code, replace: true)
+  """
   @spec function_load(String.t(), keyword()) :: [String.t()]
   def function_load(function_code, opts \\ []) do
     cmd = ["FUNCTION", "LOAD"]
@@ -73,6 +116,15 @@ defmodule Redis.Commands.Script do
   @spec function_stats() :: [String.t()]
   def function_stats, do: ["FUNCTION", "STATS"]
 
+  @doc """
+  FCALL -- invoke a Redis Function by name (Redis 7+).
+
+  Like `eval/3`, the `keys` and `args` lists map to KEYS and ARGV inside
+  the function body.
+
+      Script.fcall("myfunc", ["key1"], ["arg1"])
+      #=> ["FCALL", "myfunc", "1", "key1", "arg1"]
+  """
   @spec fcall(String.t(), [String.t()], [String.t()]) :: [String.t()]
   def fcall(function, keys \\ [], args \\ []) do
     ["FCALL", function, to_string(length(keys))] ++ keys ++ args

@@ -2,16 +2,48 @@ defmodule Redis.Commands.SortedSet do
   @moduledoc """
   Command builders for Redis sorted set operations.
 
-  ## TODO (Phase 2)
+  This module provides pure functions that build Redis ZSET (sorted set)
+  command lists. Sorted sets associate a floating-point score with each
+  unique member, keeping the collection ordered by score. They are the
+  backbone of leaderboards, priority queues, rate limiters, and
+  time-series indexes in Redis.
 
-  ZADD, ZCARD, ZCOUNT, ZDIFF, ZDIFFSTORE, ZINCRBY, ZINTER,
-  ZINTERCARD, ZINTERSTORE, ZLEXCOUNT, ZMPOP, ZMSCORE, ZPOPMAX,
-  ZPOPMIN, ZRANDMEMBER, ZRANGE, ZRANGEBYLEX, ZRANGEBYSCORE,
-  ZRANGESTORE, ZRANK, ZREM, ZREMRANGEBYLEX, ZREMRANGEBYRANK,
-  ZREMRANGEBYSCORE, ZREVRANGE, ZREVRANGEBYSCORE, ZREVRANK,
-  ZSCAN, ZSCORE, ZUNION, ZUNIONSTORE
+  Every function returns a plain list of strings (a command). To execute
+  a command, pass the result to `Redis.command/2`; to batch several
+  commands in a single round trip, use `Redis.pipeline/2`.
+
+  ## Examples
+
+  Adding scored members and querying by rank:
+
+      iex> Redis.command(conn, Redis.Commands.SortedSet.zadd("leaderboard", [{100, "alice"}, {200, "bob"}]))
+      {:ok, 2}
+
+      iex> Redis.command(conn, Redis.Commands.SortedSet.zrange("leaderboard", "0", "-1", withscores: true))
+      {:ok, ["alice", "100", "bob", "200"]}
+
+  Range queries by score:
+
+      iex> Redis.command(conn, Redis.Commands.SortedSet.zrangebyscore("leaderboard", "150", "+inf", withscores: true))
+      {:ok, ["bob", "200"]}
+
+  Incrementing scores for a leaderboard:
+
+      iex> Redis.command(conn, Redis.Commands.SortedSet.zincrby("leaderboard", 50, "alice"))
+      {:ok, "150"}
   """
 
+  @doc """
+  Builds a ZADD command to add members with scores to the sorted set at `key`.
+
+  `score_members` is a list of `{score, member}` tuples. Supports the
+  following options:
+
+    * `:nx` - only add new members, never update existing ones
+    * `:xx` - only update existing members, never add new ones
+    * `:gt` - only update when the new score is greater than the current score
+    * `:lt` - only update when the new score is less than the current score
+  """
   @spec zadd(String.t(), [{float() | integer(), String.t()}], keyword()) :: [String.t()]
   def zadd(key, score_members, opts \\ []) do
     cmd = ["ZADD", key]
@@ -22,9 +54,24 @@ defmodule Redis.Commands.SortedSet do
     cmd ++ Enum.flat_map(score_members, fn {score, member} -> [to_string(score), member] end)
   end
 
+  @doc """
+  Builds a ZSCORE command to return the score of `member` in the sorted set
+  at `key`.
+
+  Returns `nil` if the member or key does not exist.
+  """
   @spec zscore(String.t(), String.t()) :: [String.t()]
   def zscore(key, member), do: ["ZSCORE", key, member]
 
+  @doc """
+  Builds a ZRANGE command to return members between `min` and `max` positions.
+
+  By default the range is by rank (0-based index). Options:
+
+    * `:rev` - return elements in reverse order (highest to lowest)
+    * `:withscores` - include scores alongside members in the reply
+    * `:limit` - a `{offset, count}` tuple to paginate results
+  """
   @spec zrange(String.t(), String.t(), String.t(), keyword()) :: [String.t()]
   def zrange(key, min, max, opts \\ []) do
     cmd = ["ZRANGE", key, to_string(min), to_string(max)]
@@ -39,6 +86,13 @@ defmodule Redis.Commands.SortedSet do
     cmd
   end
 
+  @doc """
+  Builds a ZRANK command to return the 0-based rank of `member` in the sorted
+  set at `key`, ordered from lowest to highest score.
+
+  Returns `nil` if the member does not exist. See `zrevrank/2` for the
+  reverse ordering.
+  """
   @spec zrank(String.t(), String.t()) :: [String.t()]
   def zrank(key, member), do: ["ZRANK", key, member]
 
@@ -62,6 +116,13 @@ defmodule Redis.Commands.SortedSet do
     ["ZDIFFSTORE", destination, to_string(numkeys)] ++ keys
   end
 
+  @doc """
+  Builds a ZINCRBY command to increment the score of `member` in the sorted
+  set at `key` by `increment`.
+
+  If the member does not exist it is added with `increment` as its score.
+  Returns the new score as a string.
+  """
   @spec zincrby(String.t(), float() | integer(), String.t()) :: [String.t()]
   def zincrby(key, increment, member), do: ["ZINCRBY", key, to_string(increment), member]
 
@@ -137,6 +198,16 @@ defmodule Redis.Commands.SortedSet do
       else: cmd
   end
 
+  @doc """
+  Builds a ZRANGEBYSCORE command to return members with scores between `min`
+  and `max` (inclusive by default).
+
+  Use `"-inf"` and `"+inf"` for open-ended ranges, or prefix a bound with
+  `"("` for an exclusive boundary (e.g. `"(100"`). Options:
+
+    * `:withscores` - include scores in the reply
+    * `:limit` - a `{offset, count}` tuple to paginate results
+  """
   @spec zrangebyscore(String.t(), String.t(), String.t(), keyword()) :: [String.t()]
   def zrangebyscore(key, min, max, opts \\ []) do
     cmd = ["ZRANGEBYSCORE", key, min, max]
