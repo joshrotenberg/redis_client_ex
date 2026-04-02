@@ -1,5 +1,10 @@
 # Redis
 
+[![CI](https://github.com/joshrotenberg/redis_ex/actions/workflows/ci.yml/badge.svg)](https://github.com/joshrotenberg/redis_ex/actions/workflows/ci.yml)
+[![Hex.pm](https://img.shields.io/hexpm/v/redis_client_ex.svg)](https://hex.pm/packages/redis_client_ex)
+[![Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/redis_client_ex)
+[![License](https://img.shields.io/hexpm/l/redis_client_ex.svg)](LICENSE)
+
 Modern, full-featured Redis client for Elixir built on OTP.
 
 RESP3 native. Cluster-aware. Client-side caching. Resilience built in. Zero required dependencies.
@@ -218,10 +223,12 @@ Supervisor.start_link(children, strategy: :one_for_one)
 ```elixir
 def deps do
   [
-    {:redis, "~> 0.1.0"}
+    {:redis_client_ex, "~> 0.1"}
   ]
 end
 ```
+
+The Hex package is `redis_client_ex`, but the application and all modules use the `Redis` namespace.
 
 ## Benchmarks
 
