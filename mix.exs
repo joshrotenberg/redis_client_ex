@@ -34,6 +34,7 @@ defmodule Redis.MixProject do
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:stream_data, "~> 1.0", only: [:test]},
       {:redis_server_wrapper, "~> 0.2", only: [:test, :bench]},
       {:redix, "~> 1.5", only: :bench},
       {:benchee, "~> 1.0", only: :bench}
