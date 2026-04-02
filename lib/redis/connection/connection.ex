@@ -121,6 +121,95 @@ defmodule Redis.Connection do
   end
 
   @doc """
+  Executes a WATCH-based optimistic locking transaction.
+
+  Watches the given keys, calls `fun` with the connection to read current
+  values and compute commands, then executes those commands in a MULTI/EXEC
+  block. If any watched key was modified by another client, EXEC returns nil
+  and the function is retried (up to `:max_retries` times, default 3).
+
+  The function `fun` receives the connection and must return either:
+  - a list of commands to execute in the transaction
+  - `{:abort, reason}` to abort without executing
+
+  Returns `{:ok, results}` on success, `{:error, :watch_conflict}` if all
+  retries are exhausted, or `{:error, reason}` on other failures.
+
+  ## Example
+
+      Redis.Connection.watch_transaction(conn, ["account:1", "account:2"], fn conn ->
+        {:ok, bal1} = Redis.Connection.command(conn, ["GET", "account:1"])
+        {:ok, bal2} = Redis.Connection.command(conn, ["GET", "account:2"])
+
+        amount = 100
+        new1 = String.to_integer(bal1) - amount
+        new2 = String.to_integer(bal2) + amount
+
+        [
+          ["SET", "account:1", to_string(new1)],
+          ["SET", "account:2", to_string(new2)]
+        ]
+      end)
+  """
+  @spec watch_transaction(
+          GenServer.server(),
+          [String.t()],
+          (GenServer.server() -> [[String.t()]] | {:abort, term()}),
+          keyword()
+        ) :: {:ok, [term()]} | {:error, term()}
+  def watch_transaction(conn, keys, fun, opts \\ []) do
+    max_retries = Keyword.get(opts, :max_retries, 3)
+    do_watch_transaction(conn, keys, fun, opts, max_retries)
+  end
+
+  defp do_watch_transaction(_conn, _keys, _fun, _opts, 0) do
+    {:error, :watch_conflict}
+  end
+
+  defp do_watch_transaction(conn, keys, fun, opts, retries_left) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+
+    with {:ok, "OK"} <- GenServer.call(conn, {:command, ["WATCH" | keys]}, timeout),
+         {:ok, commands} <- safe_build_commands(conn, fun),
+         result <- GenServer.call(conn, {:transaction, commands}, timeout) do
+      case result do
+        {:error, :transaction_aborted} ->
+          # WATCH conflict — EXEC returned nil, retry
+          do_watch_transaction(conn, keys, fun, opts, retries_left - 1)
+
+        other ->
+          other
+      end
+    else
+      {:abort, reason} ->
+        # User aborted — unwatch and return error
+        GenServer.call(conn, {:command, ["UNWATCH"]}, timeout)
+        {:error, {:aborted, reason}}
+
+      {:error, _} = error ->
+        # Clean up WATCH state on error
+        catch_unwatch(conn, timeout)
+        error
+    end
+  end
+
+  defp safe_build_commands(conn, fun) do
+    case fun.(conn) do
+      {:abort, _} = abort -> abort
+      commands when is_list(commands) -> {:ok, commands}
+    end
+  rescue
+    e ->
+      {:error, {:user_function_error, e}}
+  end
+
+  defp catch_unwatch(conn, timeout) do
+    GenServer.call(conn, {:command, ["UNWATCH"]}, timeout)
+  catch
+    :exit, _ -> :ok
+  end
+
+  @doc """
   Sends a command without waiting for a reply.
   Uses CLIENT REPLY OFF/ON internally.
   """

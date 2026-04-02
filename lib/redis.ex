@@ -67,6 +67,27 @@ defmodule Redis do
   @spec transaction(conn(), [[String.t()]], keyword()) :: {:ok, [term()]} | {:error, term()}
   def transaction(conn, commands, opts \\ []), do: Connection.transaction(conn, commands, opts)
 
+  @doc """
+  Executes a WATCH-based optimistic locking transaction.
+
+  Watches the given keys, calls `fun` to read values and build commands,
+  then executes in MULTI/EXEC. Retries automatically on conflict.
+
+      Redis.watch_transaction(conn, ["balance"], fn conn ->
+        {:ok, bal} = Redis.command(conn, ["GET", "balance"])
+        new_bal = String.to_integer(bal) + 100
+        [["SET", "balance", to_string(new_bal)]]
+      end)
+  """
+  @spec watch_transaction(
+          conn(),
+          [String.t()],
+          (conn() -> [[String.t()]] | {:abort, term()}),
+          keyword()
+        ) :: {:ok, [term()]} | {:error, term()}
+  def watch_transaction(conn, keys, fun, opts \\ []),
+    do: Connection.watch_transaction(conn, keys, fun, opts)
+
   @doc "Sends a command without waiting for a reply (CLIENT REPLY OFF/ON)."
   @spec noreply_command(conn(), [String.t()], keyword()) :: :ok | {:error, term()}
   def noreply_command(conn, args, opts \\ []), do: Connection.noreply_command(conn, args, opts)
