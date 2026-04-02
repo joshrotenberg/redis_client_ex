@@ -4,13 +4,15 @@ defmodule Redis.Commands.JSONIntegrationTest do
   alias Redis.Commands.JSON
   alias Redis.Connection
 
-  # Uses redis-server on port 6398 from test_helper.exs
   # Requires Redis Stack (JSON module)
+  # Connects to port from REDIS_STACK_PORT env var, or 6379 (Docker service in CI)
 
   @moduletag :redis_stack
 
+  @stack_port String.to_integer(System.get_env("REDIS_STACK_PORT") || "6379")
+
   setup do
-    {:ok, conn} = Connection.start_link(port: 6398)
+    {:ok, conn} = Connection.start_link(port: @stack_port)
 
     on_exit(fn ->
       Connection.command(conn, ["DEL", "json:test", "json:arr", "json:num", "json:obj"])

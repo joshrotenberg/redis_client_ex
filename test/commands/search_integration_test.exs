@@ -4,13 +4,15 @@ defmodule Redis.Commands.SearchIntegrationTest do
   alias Redis.Commands.Search
   alias Redis.Connection
 
-  # Uses redis-server on port 6398 from test_helper.exs
   # Requires Redis Stack (Search module)
+  # Connects to port from REDIS_STACK_PORT env var, or 6379 (Docker service in CI)
 
   @moduletag :redis_stack
 
+  @stack_port String.to_integer(System.get_env("REDIS_STACK_PORT") || "6379")
+
   setup do
-    {:ok, conn} = Connection.start_link(port: 6398)
+    {:ok, conn} = Connection.start_link(port: @stack_port)
 
     # Clean up indexes and keys
     on_exit(fn ->
