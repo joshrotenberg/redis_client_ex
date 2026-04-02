@@ -1,28 +1,40 @@
 defmodule Redis.Commands.Search do
   @moduledoc """
-  Command builders for Redis Search (FT.*) operations (Redis 8+ / RediSearch).
+  Command builders for RediSearch (FT.*) full-text search and indexing.
 
-  Includes a schema builder DSL for `FT.CREATE`.
+  Provides pure functions for creating and managing search indexes, running
+  full-text and numeric queries, performing aggregations, and managing
+  auto-complete suggestion dictionaries. Includes a schema builder DSL that
+  translates Elixir tuples into the FT.CREATE SCHEMA syntax.
 
-  ## Usage
+  All functions return command lists for use with `Redis.command/2` or
+  `Redis.pipeline/2`.
 
-      # Create an index on JSON documents
+  ## Examples
+
+      # Create a JSON index with text, numeric, and tag fields
       Redis.command(conn, Search.create("idx:users", :json,
         prefix: "user:",
         schema: [
           {"$.name", :text, as: "name"},
-          {"$.age", :numeric, as: "age"},
+          {"$.age", :numeric, as: "age", sortable: true},
           {"$.email", :tag, as: "email"}
         ]
       ))
 
-      # Search
-      Redis.command(conn, Search.search("idx:users", "@name:Alice"))
+      # Full-text search with sorting and pagination
+      Redis.command(conn, Search.search("idx:users", "@name:Alice",
+        sortby: {"age", :asc},
+        limit: {0, 20},
+        return: ["name", "age"]
+      ))
 
-      # Aggregate
+      # Aggregation with grouping and reduction
       Redis.command(conn, Search.aggregate("idx:users", "*",
         groupby: ["@age"],
-        reduce: [{"COUNT", 0, as: "count"}]
+        reduce: [{"COUNT", 0, as: "count"}],
+        sortby: [{"@count", :desc}],
+        limit: {0, 10}
       ))
   """
 

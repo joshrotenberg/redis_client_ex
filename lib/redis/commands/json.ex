@@ -1,19 +1,28 @@
 defmodule Redis.Commands.JSON do
   @moduledoc """
-  Command builders for Redis JSON operations (Redis 8+ / RedisJSON).
+  Command builders for RedisJSON operations (Redis 8+ / RedisJSON module).
 
-  All path arguments default to `"$"` (root). Values are automatically
-  encoded to JSON strings via `JSON.encode!/1`.
+  Provides pure functions for storing, retrieving, and manipulating JSON
+  documents inside Redis. Supports the full JSON.* command set including
+  object, array, string, and numeric operations.
 
-  ## Usage
+  All path arguments default to `"$"` (JSONPath root). Values passed to
+  mutating functions are automatically encoded via `JSON.encode!/1` unless
+  the `raw: true` option is given.
 
-      # Raw command building
-      Redis.Commands.JSON.set("user:1", %{name: "Alice", age: 30})
-      #=> ["JSON.SET", "user:1", "$", ~s({"name":"Alice","age":30})]
+  Every function returns a command list for use with `Redis.command/2` or
+  `Redis.pipeline/2`.
 
-      # With connection
-      Redis.command(conn, JSON.set("doc", %{x: 1}))
-      Redis.command(conn, JSON.get("doc"))
+  ## Examples
+
+      # Store a JSON document
+      Redis.command(conn, JSON.set("user:1", %{name: "Alice", age: 30}))
+
+      # Read specific paths from a document
+      Redis.command(conn, JSON.get("user:1", paths: ["$.name", "$.age"]))
+
+      # Append elements to a nested array
+      Redis.command(conn, JSON.arrappend("user:1", ["reading", "hiking"], "$.hobbies"))
   """
 
   @root "$"

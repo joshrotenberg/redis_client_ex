@@ -1,19 +1,72 @@
 defmodule Redis.Commands.Server do
   @moduledoc """
-  Command builders for Redis server operations.
+  Command builders for Redis server administration and introspection.
 
-  ## TODO (Phase 2)
+  Provides pure functions that build command lists for server-level operations
+  including connectivity checks (PING), server information (INFO, DBSIZE, TIME),
+  configuration management (CONFIG GET/SET), client management (CLIENT LIST/KILL),
+  persistence controls (SAVE, BGSAVE), and ACL management. Each function returns
+  a plain list of strings suitable for passing to `Redis.command/2` or
+  `Redis.pipeline/2`.
 
-  CLIENT, CONFIG, DBSIZE, DEBUG, FLUSHALL, FLUSHDB, INFO,
-  LASTSAVE, MONITOR, PSYNC, REPLICAOF, SAVE, SHUTDOWN, SLOWLOG,
-  TIME, WAIT
+  These functions contain no connection or networking logic -- they only construct
+  the Redis protocol command as a list.
+
+  ## Examples
+
+  Ping the server:
+
+      iex> Redis.Commands.Server.ping()
+      ["PING"]
+      iex> Redis.Commands.Server.ping("hello")
+      ["PING", "hello"]
+
+  Retrieve a specific INFO section:
+
+      iex> Redis.Commands.Server.info("memory")
+      ["INFO", "memory"]
+
+  Read and update a configuration parameter:
+
+      iex> Redis.Commands.Server.config_get("maxmemory")
+      ["CONFIG", "GET", "maxmemory"]
+      iex> Redis.Commands.Server.config_set("maxmemory", "256mb")
+      ["CONFIG", "SET", "maxmemory", "256mb"]
   """
 
+  @doc """
+  Builds a PING command, optionally with a custom message.
+
+  When called without arguments, the server responds with "PONG". When called
+  with a message, the server echoes that message back.
+
+  ## Examples
+
+      iex> Redis.Commands.Server.ping()
+      ["PING"]
+
+      iex> Redis.Commands.Server.ping("hello")
+      ["PING", "hello"]
+  """
   @spec ping(String.t() | nil) :: [String.t()]
   def ping(message \\ nil) do
     if message, do: ["PING", message], else: ["PING"]
   end
 
+  @doc """
+  Builds an INFO command to retrieve server information.
+
+  When called without arguments, returns all sections. Pass a section name
+  (e.g., "memory", "replication", "stats") to limit the response.
+
+  ## Examples
+
+      iex> Redis.Commands.Server.info()
+      ["INFO"]
+
+      iex> Redis.Commands.Server.info("replication")
+      ["INFO", "replication"]
+  """
   @spec info(String.t() | nil) :: [String.t()]
   def info(section \\ nil) do
     if section, do: ["INFO", section], else: ["INFO"]
@@ -39,6 +92,19 @@ defmodule Redis.Commands.Server do
   @spec client_info() :: [String.t()]
   def client_info, do: ["CLIENT", "INFO"]
 
+  @doc """
+  Builds a CLIENT LIST command to retrieve information about connected clients.
+
+  Supports filtering by client type (`:type`) or specific client IDs (`:id`).
+
+  ## Examples
+
+      iex> Redis.Commands.Server.client_list()
+      ["CLIENT", "LIST"]
+
+      iex> Redis.Commands.Server.client_list(type: "normal")
+      ["CLIENT", "LIST", "TYPE", "normal"]
+  """
   @spec client_list(keyword()) :: [String.t()]
   def client_list(opts \\ []) do
     cmd = ["CLIENT", "LIST"]
@@ -76,6 +142,17 @@ defmodule Redis.Commands.Server do
     cmd
   end
 
+  @doc """
+  Builds a CONFIG GET command to read a server configuration parameter.
+
+  Supports glob-style patterns (e.g., "max*") to retrieve multiple parameters
+  at once.
+
+  ## Example
+
+      iex> Redis.Commands.Server.config_get("maxmemory")
+      ["CONFIG", "GET", "maxmemory"]
+  """
   @spec config_get(String.t()) :: [String.t()]
   def config_get(parameter), do: ["CONFIG", "GET", parameter]
 

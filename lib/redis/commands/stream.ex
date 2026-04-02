@@ -2,13 +2,47 @@ defmodule Redis.Commands.Stream do
   @moduledoc """
   Command builders for Redis stream operations.
 
-  ## TODO (Phase 2/4)
+  This module provides pure functions that build Redis Stream command
+  lists. Streams are append-only log structures that support fan-out
+  reads, consumer groups with at-least-once delivery, and automatic
+  ID generation. They are well-suited for event sourcing, task queues,
+  and activity feeds.
 
-  XADD, XLEN, XRANGE, XREVRANGE, XREAD, XTRIM,
-  XGROUP CREATE, XGROUP DESTROY, XGROUP SETID,
-  XREADGROUP, XACK, XCLAIM, XAUTOCLAIM, XPENDING, XINFO
+  Every function returns a plain list of strings (a command). To execute
+  a command, pass the result to `Redis.command/2`; to batch several
+  commands in a single round trip, use `Redis.pipeline/2`.
+
+  ## Examples
+
+  Appending entries and reading them back:
+
+      iex> Redis.command(conn, Redis.Commands.Stream.xadd("events", "*", [{"type", "click"}, {"url", "/home"}]))
+      {:ok, "1234567890123-0"}
+
+      iex> Redis.command(conn, Redis.Commands.Stream.xread(streams: [{"events", "0"}], count: 10))
+      {:ok, [["events", [["1234567890123-0", ["type", "click", "url", "/home"]]]]]}
+
+  Consumer group pattern -- read, process, acknowledge:
+
+      iex> Redis.command(conn, Redis.Commands.Stream.xgroup_create("events", "workers", "0", mkstream: true))
+      {:ok, "OK"}
+
+      iex> Redis.command(conn, Redis.Commands.Stream.xreadgroup("workers", "worker-1", streams: [{"events", ">"}], count: 5))
+      {:ok, [["events", [["1234567890123-0", ["type", "click", "url", "/home"]]]]]}
+
+      iex> Redis.command(conn, Redis.Commands.Stream.xack("events", "workers", ["1234567890123-0"]))
+      {:ok, 1}
   """
 
+  @doc """
+  Builds an XADD command to append an entry to the stream at `key`.
+
+  `id` defaults to `"*"` which lets Redis auto-generate a monotonic ID.
+  `fields` is a list of `{field, value}` tuples representing the entry
+  payload. Options:
+
+    * `:maxlen` - cap the stream length with approximate trimming (`~`)
+  """
   @spec xadd(String.t(), String.t(), [{String.t(), String.t()}], keyword()) :: [String.t()]
   def xadd(key, id \\ "*", fields, opts \\ []) do
     cmd = ["XADD", key]
@@ -17,6 +51,9 @@ defmodule Redis.Commands.Stream do
     cmd ++ Enum.flat_map(fields, fn {f, v} -> [f, to_string(v)] end)
   end
 
+  @doc """
+  Builds an XLEN command to return the number of entries in the stream at `key`.
+  """
   @spec xlen(String.t()) :: [String.t()]
   def xlen(key), do: ["XLEN", key]
 
@@ -26,6 +63,16 @@ defmodule Redis.Commands.Stream do
     if opts[:count], do: cmd ++ ["COUNT", to_string(opts[:count])], else: cmd
   end
 
+  @doc """
+  Builds an XREAD command to read entries from one or more streams.
+
+  Options:
+
+    * `:streams` (required) - a list of `{stream_key, last_id}` tuples.
+      Use `"0"` to read from the beginning or `"$"` to read only new entries.
+    * `:count` - maximum number of entries to return per stream
+    * `:block` - block for up to this many milliseconds waiting for new data
+  """
   @spec xread(keyword()) :: [String.t()]
   def xread(opts) do
     cmd = ["XREAD"]
@@ -34,6 +81,13 @@ defmodule Redis.Commands.Stream do
     cmd ++ ["STREAMS" | flatten_streams(opts[:streams])]
   end
 
+  @doc """
+  Builds an XACK command to acknowledge one or more stream entries.
+
+  Acknowledging an entry removes it from the consumer group's pending
+  entries list (PEL). Returns the number of entries successfully
+  acknowledged.
+  """
   @spec xack(String.t(), String.t(), [String.t()]) :: [String.t()]
   def xack(key, group, ids) when is_list(ids), do: ["XACK", key, group | ids]
 
@@ -86,6 +140,18 @@ defmodule Redis.Commands.Stream do
     cmd
   end
 
+  @doc """
+  Builds an XREADGROUP command to read entries via a consumer group.
+
+  Each entry delivered to `consumer` within `group` must later be
+  acknowledged with `xack/3`. Options:
+
+    * `:streams` (required) - a list of `{stream_key, id}` tuples.
+      Use `">"` as the id to receive only new, undelivered messages.
+    * `:count` - maximum number of entries to return per stream
+    * `:block` - block for up to this many milliseconds waiting for new data
+    * `:noack` - do not require acknowledgement for delivered entries
+  """
   @spec xreadgroup(String.t(), String.t(), keyword()) :: [String.t()]
   def xreadgroup(group, consumer, opts) do
     cmd = ["XREADGROUP", "GROUP", group, consumer]
@@ -123,6 +189,12 @@ defmodule Redis.Commands.Stream do
   @spec xinfo_groups(String.t()) :: [String.t()]
   def xinfo_groups(key), do: ["XINFO", "GROUPS", key]
 
+  @doc """
+  Builds an XINFO STREAM command to return metadata about the stream at `key`.
+
+  Pass `full: true` to include detailed information about every consumer
+  group, consumer, and pending entry.
+  """
   @spec xinfo_stream(String.t(), keyword()) :: [String.t()]
   def xinfo_stream(key, opts \\ []) do
     cmd = ["XINFO", "STREAM", key]

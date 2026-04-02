@@ -1,21 +1,66 @@
 defmodule Redis.Commands.Key do
   @moduledoc """
-  Command builders for Redis key operations.
+  Command builders for Redis key management operations.
 
-  Pure functions that return command lists — no connection logic.
+  Provides pure functions that build command lists for key-level operations such as
+  deleting keys, setting expiration, querying TTL, scanning the keyspace, checking
+  existence, renaming, and copying keys. Each function returns a plain list of
+  strings suitable for passing to `Redis.command/2` or `Redis.pipeline/2`.
 
-  ## TODO (Phase 2)
+  These functions contain no connection or networking logic -- they only construct
+  the Redis protocol command as a list.
 
-  DEL, EXISTS, EXPIRE, EXPIREAT, KEYS, PERSIST, PEXPIRE, PTTL,
-  RANDOMKEY, RENAME, RENAMENX, SCAN, SORT, TTL, TYPE, UNLINK, WAIT
+  ## Examples
+
+  Delete one or more keys:
+
+      iex> Redis.Commands.Key.del(["session:1", "session:2"])
+      ["DEL", "session:1", "session:2"]
+
+  Set a TTL and then read it back:
+
+      iex> Redis.Commands.Key.expire("session:1", 300)
+      ["EXPIRE", "session:1", "300"]
+      iex> Redis.Commands.Key.ttl("session:1")
+      ["TTL", "session:1"]
+
+  Scan the keyspace with a pattern and count hint:
+
+      iex> Redis.Commands.Key.scan(0, match: "user:*", count: 100)
+      ["SCAN", "0", "MATCH", "user:*", "COUNT", "100"]
   """
 
+  @doc """
+  Builds a DEL command to remove one or more keys.
+
+  Returns the command list for deleting the given keys. Redis returns the number
+  of keys that were removed.
+
+  ## Example
+
+      iex> Redis.Commands.Key.del(["key1", "key2"])
+      ["DEL", "key1", "key2"]
+  """
   @spec del([String.t()]) :: [String.t()]
   def del(keys) when is_list(keys), do: ["DEL" | keys]
 
   @spec exists([String.t()]) :: [String.t()]
   def exists(keys) when is_list(keys), do: ["EXISTS" | keys]
 
+  @doc """
+  Builds an EXPIRE command to set a key's time-to-live in seconds.
+
+  Supports the `:nx` option to set the expiry only when the key has no existing
+  expiry.
+
+  ## Examples
+
+      iex> Redis.Commands.Key.expire("session:1", 3600)
+      ["EXPIRE", "session:1", "3600"]
+
+      iex> Redis.Commands.Key.expire("session:1", 3600, nx: true)
+      ["EXPIRE", "session:1", "3600", "NX"]
+  """
   @spec expire(String.t(), integer(), keyword()) :: [String.t()]
   def expire(key, seconds, opts \\ []) do
     cmd = ["EXPIRE", key, to_string(seconds)]
@@ -28,6 +73,20 @@ defmodule Redis.Commands.Key do
   @spec type(String.t()) :: [String.t()]
   def type(key), do: ["TYPE", key]
 
+  @doc """
+  Builds a SCAN command to incrementally iterate over the keyspace.
+
+  Accepts options for pattern matching (`:match`), iteration count hint
+  (`:count`), and key type filtering (`:type`).
+
+  ## Examples
+
+      iex> Redis.Commands.Key.scan(0)
+      ["SCAN", "0"]
+
+      iex> Redis.Commands.Key.scan(0, match: "user:*", count: 50, type: "string")
+      ["SCAN", "0", "MATCH", "user:*", "COUNT", "50", "TYPE", "string"]
+  """
   @spec scan(integer(), keyword()) :: [String.t()]
   def scan(cursor, opts \\ []) do
     cmd = ["SCAN", to_string(cursor)]
@@ -93,6 +152,14 @@ defmodule Redis.Commands.Key do
   @spec randomkey() :: [String.t()]
   def randomkey, do: ["RANDOMKEY"]
 
+  @doc """
+  Builds a RENAME command to rename a key.
+
+  ## Example
+
+      iex> Redis.Commands.Key.rename("old_key", "new_key")
+      ["RENAME", "old_key", "new_key"]
+  """
   @spec rename(String.t(), String.t()) :: [String.t()]
   def rename(key, newkey), do: ["RENAME", key, newkey]
 

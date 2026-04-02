@@ -1,8 +1,36 @@
 defmodule Redis.Commands.TimeSeries do
   @moduledoc """
-  Command builders for Redis TimeSeries operations.
+  Command builders for Redis TimeSeries (`TS.*`) operations.
+
+  Redis TimeSeries is an append-only data structure optimized for storing
+  timestamped numeric samples. It supports automatic downsampling via
+  compaction rules, label-based indexing for multi-series queries, and
+  built-in aggregation functions (avg, sum, min, max, count, etc.) over
+  arbitrary time windows. Common use cases include metrics collection, IoT
+  sensor data, financial tick data, and application monitoring.
+
+  All functions in this module are pure and return a command list (a list of
+  strings) suitable for passing to `Redis.command/2` or `Redis.pipeline/2`.
+
+  ## Examples
+
+      # Create a time series and add a sample
+      Redis.pipeline(conn, [
+        TimeSeries.ts_create("temp:office", labels: %{"location" => "office"}),
+        TimeSeries.ts_add("temp:office", "*", 22.5)
+      ])
+
+      # Query a time range with 1-hour average aggregation
+      Redis.command(conn, TimeSeries.ts_range("temp:office", "-", "+",
+        aggregation: {:avg, 3_600_000}
+      ))
   """
 
+  @doc """
+  Creates a new time series key. Accepts options including `:retention`
+  (max age in milliseconds), `:labels` (a map or keyword list of label
+  key-value pairs), `:encoding`, `:chunk_size`, and `:duplicate_policy`.
+  """
   @spec ts_create(String.t(), keyword()) :: [String.t()]
   def ts_create(key, opts \\ []) do
     cmd = ["TS.CREATE", key]
@@ -34,6 +62,11 @@ defmodule Redis.Commands.TimeSeries do
     cmd
   end
 
+  @doc """
+  Appends a sample to a time series. Use `"*"` as the timestamp to let Redis
+  assign the current server time. Accepts the same label and retention options
+  as `ts_create/2`, plus `:on_duplicate` for handling duplicate timestamps.
+  """
   @spec ts_add(String.t(), String.t() | integer(), String.t() | number(), keyword()) :: [
           String.t()
         ]
@@ -99,6 +132,11 @@ defmodule Redis.Commands.TimeSeries do
     cmd ++ ["FILTER" | filters]
   end
 
+  @doc """
+  Queries samples in the time range `from..to` (inclusive). Use `"-"` and `"+"`
+  for the minimum and maximum timestamps. Supports `:count`, `:aggregation`
+  (e.g. `{:avg, 60_000}`), `:filter_by_ts`, and `:filter_by_value` options.
+  """
   @spec ts_range(String.t(), String.t() | integer(), String.t() | integer(), keyword()) :: [
           String.t()
         ]
