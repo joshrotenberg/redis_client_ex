@@ -197,18 +197,6 @@ Redis.Resilience.command(conn, ["GET", "key"])
 - **Lua scripting** with automatic EVALSHA/EVAL fallback
 - **Telemetry** events for connection lifecycle and command pipeline
 
-## Benchmarks
-
-Compared against [Redix](https://hex.pm/packages/redix):
-
-| Benchmark | Redis | Redix | Notes |
-|-----------|-------|-------|-------|
-| GET | 3,280/s | 3,250/s | Parity |
-| SET | 3,290/s | 3,210/s | Parity |
-| Pipeline (10) | 3,250/s | 3,170/s | Parity |
-| Cache HIT | **638,850/s** | N/A | 197x faster than network |
-| 50 concurrent GETs | **1,490/s** | 940/s | 1.6x faster |
-
 ## License
 
 MIT
