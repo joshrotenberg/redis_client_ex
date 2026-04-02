@@ -14,26 +14,42 @@ defmodule Redis.Commands.SearchIntegrationTest do
   setup do
     {:ok, conn} = Connection.start_link(port: @stack_port)
 
-    # Clean up indexes and keys
+    # Use unique index names per test to avoid collisions
+    suffix = :erlang.unique_integer([:positive])
+    idx = "idx:test:#{suffix}"
+    idx_json = "idx:json:#{suffix}"
+
     on_exit(fn ->
-      Connection.command(conn, Search.dropindex("idx:test", dd: true))
-      Connection.command(conn, Search.dropindex("idx:json", dd: true))
-      Connection.command(conn, ["DEL", "user:1", "user:2", "user:3", "doc:1", "doc:2"])
-      Connection.command(conn, Search.sugdel("ac:test", "hello"))
-      Connection.command(conn, Search.sugdel("ac:test", "help"))
-      Connection.command(conn, Search.sugdel("ac:test", "world"))
-      Connection.stop(conn)
+      # Start a fresh connection for cleanup since the test one may have died
+      case Connection.start_link(port: @stack_port) do
+        {:ok, cleanup} ->
+          Connection.command(cleanup, Search.dropindex(idx, dd: true))
+          Connection.command(cleanup, Search.dropindex(idx_json, dd: true))
+
+          for i <- 1..3 do
+            Connection.command(cleanup, ["DEL", "user:#{suffix}:#{i}"])
+          end
+
+          for i <- 1..2 do
+            Connection.command(cleanup, ["DEL", "doc:#{suffix}:#{i}"])
+          end
+
+          Connection.command(cleanup, ["DEL", "ac:test:#{suffix}"])
+          Connection.stop(cleanup)
+
+        _ ->
+          :ok
+      end
     end)
 
-    {:ok, conn: conn}
+    {:ok, conn: conn, idx: idx, idx_json: idx_json, suffix: suffix}
   end
 
   describe "hash index" do
-    test "create, populate, and search", %{conn: conn} do
-      # Create index
+    test "create, populate, and search", %{conn: conn, idx: idx, suffix: s} do
       cmd =
-        Search.create("idx:test", :hash,
-          prefix: "user:",
+        Search.create(idx, :hash,
+          prefix: "user:#{s}:",
           schema: [
             {"name", :text},
             {"age", :numeric, sortable: true},
@@ -43,109 +59,89 @@ defmodule Redis.Commands.SearchIntegrationTest do
 
       assert {:ok, "OK"} = Connection.command(conn, cmd)
 
-      # Populate data
-      assert {:ok, _} =
-               Connection.command(conn, [
-                 "HSET",
-                 "user:1",
-                 "name",
-                 "Alice",
-                 "age",
-                 "30",
-                 "city",
-                 "NYC"
-               ])
+      for {name, age, city, i} <- [
+            {"Alice", "30", "NYC", 1},
+            {"Bob", "25", "LA", 2},
+            {"Charlie", "35", "NYC", 3}
+          ] do
+        assert {:ok, _} =
+                 Connection.command(conn, [
+                   "HSET",
+                   "user:#{s}:#{i}",
+                   "name",
+                   name,
+                   "age",
+                   age,
+                   "city",
+                   city
+                 ])
+      end
 
-      assert {:ok, _} =
-               Connection.command(conn, [
-                 "HSET",
-                 "user:2",
-                 "name",
-                 "Bob",
-                 "age",
-                 "25",
-                 "city",
-                 "LA"
-               ])
-
-      assert {:ok, _} =
-               Connection.command(conn, [
-                 "HSET",
-                 "user:3",
-                 "name",
-                 "Charlie",
-                 "age",
-                 "35",
-                 "city",
-                 "NYC"
-               ])
-
-      # Give the index time to build
       Process.sleep(200)
 
-      # Search by text
-      assert {:ok, result} = Connection.command(conn, Search.search("idx:test", "@name:Alice"))
-      # Result format: [count, key, [field, value, ...], ...]
-      assert is_list(result)
-      [count | _] = result
+      # Search by text -- RESP3 returns a map with "total_results" key
+      assert {:ok, result} = Connection.command(conn, Search.search(idx, "@name:Alice"))
+      assert %{"total_results" => count} = result
       assert count >= 1
 
       # Search by tag
-      assert {:ok, result} =
-               Connection.command(conn, Search.search("idx:test", "@city:{NYC}"))
-
-      [count | _] = result
+      assert {:ok, result} = Connection.command(conn, Search.search(idx, "@city:{NYC}"))
+      assert %{"total_results" => count} = result
       assert count >= 2
 
       # Search with sort
       assert {:ok, result} =
                Connection.command(
                  conn,
-                 Search.search("idx:test", "*", sortby: {"age", :asc}, limit: {0, 10})
+                 Search.search(idx, "*", sortby: {"age", :asc}, limit: {0, 10})
                )
 
-      [count | _] = result
+      assert %{"total_results" => count} = result
       assert count >= 3
     end
 
-    test "INFO returns index metadata", %{conn: conn} do
-      Search.create("idx:test", :hash,
-        prefix: "user:",
-        schema: [{"name", :text}]
-      )
-      |> then(&Connection.command(conn, &1))
+    test "INFO returns index metadata", %{conn: conn, idx: idx} do
+      assert {:ok, "OK"} =
+               Connection.command(
+                 conn,
+                 Search.create(idx, :hash, prefix: "user:", schema: [{"name", :text}])
+               )
 
-      assert {:ok, info} = Connection.command(conn, Search.info("idx:test"))
-      assert is_list(info)
+      assert {:ok, info} = Connection.command(conn, Search.info(idx))
+      # RESP3 returns a map
+      assert is_map(info)
+      assert Map.has_key?(info, "index_name")
     end
 
-    test "_LIST includes created index", %{conn: conn} do
-      Search.create("idx:test", :hash,
-        prefix: "user:",
-        schema: [{"name", :text}]
-      )
-      |> then(&Connection.command(conn, &1))
+    test "_LIST includes created index", %{conn: conn, idx: idx} do
+      assert {:ok, "OK"} =
+               Connection.command(
+                 conn,
+                 Search.create(idx, :hash, prefix: "user:", schema: [{"name", :text}])
+               )
 
       assert {:ok, indexes} = Connection.command(conn, Search.list())
-      assert "idx:test" in indexes
+      # RESP3 may return a set or list
+      indexes = if is_struct(indexes, MapSet), do: MapSet.to_list(indexes), else: indexes
+      assert idx in indexes
     end
 
-    test "DROPINDEX removes the index", %{conn: conn} do
-      Search.create("idx:test", :hash,
-        prefix: "user:",
-        schema: [{"name", :text}]
-      )
-      |> then(&Connection.command(conn, &1))
+    test "DROPINDEX removes the index", %{conn: conn, idx: idx} do
+      assert {:ok, "OK"} =
+               Connection.command(
+                 conn,
+                 Search.create(idx, :hash, prefix: "user:", schema: [{"name", :text}])
+               )
 
-      assert {:ok, "OK"} = Connection.command(conn, Search.dropindex("idx:test"))
+      assert {:ok, "OK"} = Connection.command(conn, Search.dropindex(idx))
     end
   end
 
   describe "JSON index" do
-    test "create and search JSON documents", %{conn: conn} do
+    test "create and search JSON documents", %{conn: conn, idx_json: idx, suffix: s} do
       cmd =
-        Search.create("idx:json", :json,
-          prefix: "doc:",
+        Search.create(idx, :json,
+          prefix: "doc:#{s}:",
           schema: [
             {"$.title", :text, as: "title"},
             {"$.score", :numeric, as: "score", sortable: true}
@@ -157,7 +153,7 @@ defmodule Redis.Commands.SearchIntegrationTest do
       assert {:ok, "OK"} =
                Connection.command(conn, [
                  "JSON.SET",
-                 "doc:1",
+                 "doc:#{s}:1",
                  "$",
                  ~s({"title":"Redis Guide","score":95})
                ])
@@ -165,34 +161,37 @@ defmodule Redis.Commands.SearchIntegrationTest do
       assert {:ok, "OK"} =
                Connection.command(conn, [
                  "JSON.SET",
-                 "doc:2",
+                 "doc:#{s}:2",
                  "$",
                  ~s({"title":"Elixir Handbook","score":88})
                ])
 
       Process.sleep(200)
 
-      assert {:ok, result} = Connection.command(conn, Search.search("idx:json", "@title:Redis"))
-      [count | _] = result
+      assert {:ok, result} = Connection.command(conn, Search.search(idx, "@title:Redis"))
+      assert %{"total_results" => count} = result
       assert count >= 1
     end
   end
 
   describe "aggregate" do
-    test "basic aggregation", %{conn: conn} do
-      Search.create("idx:test", :hash,
-        prefix: "user:",
-        schema: [
-          {"name", :text},
-          {"age", :numeric, sortable: true},
-          {"city", :tag}
-        ]
-      )
-      |> then(&Connection.command(conn, &1))
+    test "basic aggregation", %{conn: conn, idx: idx, suffix: s} do
+      assert {:ok, "OK"} =
+               Connection.command(
+                 conn,
+                 Search.create(idx, :hash,
+                   prefix: "user:#{s}:",
+                   schema: [
+                     {"name", :text},
+                     {"age", :numeric, sortable: true},
+                     {"city", :tag}
+                   ]
+                 )
+               )
 
       Connection.command(conn, [
         "HSET",
-        "user:1",
+        "user:#{s}:1",
         "name",
         "Alice",
         "age",
@@ -203,7 +202,7 @@ defmodule Redis.Commands.SearchIntegrationTest do
 
       Connection.command(conn, [
         "HSET",
-        "user:2",
+        "user:#{s}:2",
         "name",
         "Bob",
         "age",
@@ -215,51 +214,61 @@ defmodule Redis.Commands.SearchIntegrationTest do
       Process.sleep(200)
 
       cmd =
-        Search.aggregate("idx:test", "*",
+        Search.aggregate(idx, "*",
           groupby: ["@city"],
           reduce: [{"COUNT", 0, as: "count"}]
         )
 
       assert {:ok, result} = Connection.command(conn, cmd)
-      assert is_list(result)
+      # RESP3 returns a map with "results" key
+      assert is_map(result)
+      assert Map.has_key?(result, "results")
     end
   end
 
   describe "suggestions" do
-    test "SUGADD and SUGGET", %{conn: conn} do
-      assert {:ok, _} = Connection.command(conn, Search.sugadd("ac:test", "hello", 1.0))
-      assert {:ok, _} = Connection.command(conn, Search.sugadd("ac:test", "help", 1.0))
-      assert {:ok, _} = Connection.command(conn, Search.sugadd("ac:test", "world", 1.0))
+    test "SUGADD and SUGGET", %{conn: conn, suffix: s} do
+      key = "ac:test:#{s}"
+      assert {:ok, _} = Connection.command(conn, Search.sugadd(key, "hello", 1.0))
+      assert {:ok, _} = Connection.command(conn, Search.sugadd(key, "help", 1.0))
+      assert {:ok, _} = Connection.command(conn, Search.sugadd(key, "world", 1.0))
 
-      assert {:ok, suggestions} = Connection.command(conn, Search.sugget("ac:test", "hel"))
+      assert {:ok, suggestions} = Connection.command(conn, Search.sugget(key, "hel"))
       assert is_list(suggestions)
       assert [_ | _] = suggestions
     end
 
-    test "SUGLEN", %{conn: conn} do
-      Connection.command(conn, Search.sugadd("ac:test", "hello", 1.0))
-      Connection.command(conn, Search.sugadd("ac:test", "world", 1.0))
+    test "SUGLEN", %{conn: conn, suffix: s} do
+      key = "ac:test:#{s}"
+      Connection.command(conn, Search.sugadd(key, "hello", 1.0))
+      Connection.command(conn, Search.sugadd(key, "world", 1.0))
 
-      assert {:ok, len} = Connection.command(conn, Search.suglen("ac:test"))
+      assert {:ok, len} = Connection.command(conn, Search.suglen(key))
       assert len >= 2
     end
   end
 
   describe "TAGVALS" do
-    test "returns tag values from indexed data", %{conn: conn} do
-      Search.create("idx:test", :hash,
-        prefix: "user:",
-        schema: [{"city", :tag}]
-      )
-      |> then(&Connection.command(conn, &1))
+    test "returns tag values from indexed data", %{conn: conn, idx: idx, suffix: s} do
+      assert {:ok, "OK"} =
+               Connection.command(
+                 conn,
+                 Search.create(idx, :hash,
+                   prefix: "user:#{s}:",
+                   schema: [{"city", :tag}]
+                 )
+               )
 
-      Connection.command(conn, ["HSET", "user:1", "city", "NYC"])
-      Connection.command(conn, ["HSET", "user:2", "city", "LA"])
+      Connection.command(conn, ["HSET", "user:#{s}:1", "city", "NYC"])
+      Connection.command(conn, ["HSET", "user:#{s}:2", "city", "LA"])
 
       Process.sleep(200)
 
-      assert {:ok, tags} = Connection.command(conn, Search.tagvals("idx:test", "city"))
+      assert {:ok, tags} = Connection.command(conn, Search.tagvals(idx, "city"))
+      # RESP3 may return a set
+      tags = if is_struct(tags, MapSet), do: MapSet.to_list(tags), else: tags
       assert is_list(tags)
+      assert length(tags) >= 2
     end
   end
 end
