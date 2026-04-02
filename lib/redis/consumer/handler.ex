@@ -4,17 +4,39 @@ defmodule Redis.Consumer.Handler do
 
   ## Example
 
-      defmodule MyApp.EventHandler do
+      defmodule MyApp.NotificationHandler do
         @behaviour Redis.Consumer.Handler
+        require Logger
 
         @impl true
         def handle_messages(messages, metadata) do
-          for {stream, entries} <- messages, {id, fields} <- entries do
-            IO.puts("[\#{stream}] \#{id}: \#{inspect(fields)}")
+          for [stream, entries] <- messages, [id, fields] <- entries do
+            fields_map = fields |> Enum.chunk_every(2) |> Map.new(fn [k, v] -> {k, v} end)
+
+            case send_notification(fields_map) do
+              :ok -> Logger.info("Sent notification \#{id}")
+              {:error, reason} -> Logger.error("Failed \#{id}: \#{inspect(reason)}")
+            end
           end
 
           :ok
         end
+
+        defp send_notification(fields), do: # ...
+      end
+
+  ## Selective Acknowledgement
+
+  Return `{:ok, ids}` to acknowledge only specific messages. Unacknowledged
+  messages remain pending and will be redelivered via XAUTOCLAIM:
+
+      def handle_messages(messages, _metadata) do
+        {succeeded, _failed} =
+          messages
+          |> Enum.flat_map(fn [_stream, entries] -> entries end)
+          |> Enum.split_with(fn [_id, fields] -> process(fields) == :ok end)
+
+        {:ok, Enum.map(succeeded, fn [id, _] -> id end)}
       end
 
   ## Return Values
@@ -23,6 +45,15 @@ defmodule Redis.Consumer.Handler do
     * `{:ok, ids}` - selectively acknowledge only the given message IDs
     * `{:error, reason}` - processing failed, messages will NOT be acknowledged
       and will be redelivered on the next XAUTOCLAIM cycle
+
+  ## Metadata
+
+  The `metadata` map contains:
+
+    * `:stream` - the stream key
+    * `:group` - the consumer group name
+    * `:claimed` - `true` when messages were recovered via XAUTOCLAIM
+      (absent for normal deliveries)
   """
 
   @type message_id :: String.t()

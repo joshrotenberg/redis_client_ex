@@ -152,6 +152,46 @@ receive do
 end
 ```
 
+## Streams Consumer
+
+High-level consumer group abstraction over Redis Streams. Define a handler,
+start the consumer, and messages are delivered with automatic acknowledgement
+and recovery of pending messages from crashed consumers.
+
+```elixir
+defmodule MyApp.OrderHandler do
+  @behaviour Redis.Consumer.Handler
+
+  @impl true
+  def handle_messages(messages, _metadata) do
+    for [stream, entries] <- messages, [id, fields] <- entries do
+      IO.puts("#{stream} #{id}: #{inspect(fields)}")
+    end
+
+    :ok
+  end
+end
+
+children = [
+  {Redis.Connection, port: 6379, name: :redis},
+  {Redis.Consumer,
+   conn: :redis,
+   stream: "orders",
+   group: "processors",
+   consumer: "proc-1",
+   handler: MyApp.OrderHandler}
+]
+```
+
+Produce messages from anywhere:
+
+```elixir
+Redis.command(conn, ["XADD", "orders", "*", "item", "widget", "qty", "5"])
+```
+
+Scale by adding more consumers with different `:consumer` names --
+Redis distributes messages across the group automatically.
+
 ## Client-Side Caching
 
 ```elixir
