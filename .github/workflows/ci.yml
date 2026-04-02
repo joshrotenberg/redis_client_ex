@@ -51,9 +51,7 @@ jobs:
           path: |
             deps
             _build
-          key: mix-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            mix-${{ matrix.elixir }}-${{ matrix.otp }}-
+          key: mix-v2-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
 
       - name: Install dependencies
         run: mix deps.get
@@ -72,9 +70,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: _build/test
-          key: plt-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            plt-${{ matrix.elixir }}-${{ matrix.otp }}-
+          key: plt-v2-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
 
       - name: Create PLTs
         if: steps.plt-cache.outputs.cache-hit != 'true'
@@ -105,7 +101,7 @@ jobs:
           path: |
             deps
             _build
-          key: mix-docs-1.18-27-${{ hashFiles('mix.lock') }}
+          key: mix-docs-v2-1.18-27-${{ hashFiles('mix.lock') }}
 
       - name: Install dependencies
         run: mix deps.get

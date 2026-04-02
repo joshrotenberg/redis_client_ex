@@ -1,6 +1,7 @@
 exclude =
   if(System.get_env("REDIS_STACK"), do: [], else: [:redis_stack]) ++
-    if System.get_env("REDIS_SENTINEL"), do: [], else: [:sentinel]
+    if(System.get_env("REDIS_SENTINEL"), do: [], else: [:sentinel]) ++
+    if(System.get_env("REDIS_CLUSTER_FAILOVER"), do: [], else: [:cluster_failover])
 
 ExUnit.start(exclude: exclude)
 
