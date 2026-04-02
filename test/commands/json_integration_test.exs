@@ -146,7 +146,9 @@ defmodule Redis.Commands.JSONIntegrationTest do
       assert {:ok, "OK"} =
                Connection.command(conn, JSON.set("json:test:#{s}", %{name: "Alice"}))
 
-      assert {:ok, [type]} = Connection.command(conn, JSON.type("json:test:#{s}"))
+      assert {:ok, result} = Connection.command(conn, JSON.type("json:test:#{s}"))
+      # RESP3 returns nested list [["object"]], unwrap to check
+      type = List.flatten(List.wrap(result)) |> hd()
       assert type == "object"
     end
   end
