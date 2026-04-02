@@ -1,11 +1,12 @@
 defmodule Redis.IntegrationTest do
   use ExUnit.Case, async: false
 
+  alias Redis.Cache
   alias Redis.Connection
   alias Redis.Connection.Pool
   alias Redis.PubSub
-  alias Redis.Cache
   alias Redis.Resilience
+  alias Redis.Resilience.CircuitBreaker
 
   @moduletag timeout: 60_000
 
@@ -252,13 +253,13 @@ defmodule Redis.IntegrationTest do
       {:ok, conn} = Connection.start_link(port: 6459)
 
       {:ok, cb} =
-        Redis.Resilience.CircuitBreaker.start_link(
+        CircuitBreaker.start_link(
           conn: conn,
           failure_threshold: 3,
           reset_timeout: 2_000
         )
 
-      assert {:ok, "PONG"} = Redis.Resilience.CircuitBreaker.command(cb, ["PING"])
+      assert {:ok, "PONG"} = CircuitBreaker.command(cb, ["PING"])
 
       # Kill the server to cause failures
       RedisServerWrapper.Server.stop(srv)
@@ -266,14 +267,14 @@ defmodule Redis.IntegrationTest do
 
       # Trigger failures to trip the breaker
       for _ <- 1..5 do
-        Redis.Resilience.CircuitBreaker.command(cb, ["PING"])
+        CircuitBreaker.command(cb, ["PING"])
       end
 
-      state = Redis.Resilience.CircuitBreaker.state(cb)
+      state = CircuitBreaker.state(cb)
       assert state.state == :open
 
       # Open circuit should fail fast
-      assert {:error, :circuit_open} = Redis.Resilience.CircuitBreaker.command(cb, ["PING"])
+      assert {:error, :circuit_open} = CircuitBreaker.command(cb, ["PING"])
 
       # Restart server and wait for half-open
       {:ok, _srv2} = RedisServerWrapper.Server.start_link(port: 6459)
@@ -282,7 +283,7 @@ defmodule Redis.IntegrationTest do
       # The connection needs to reconnect too
       Process.sleep(1000)
 
-      Redis.Resilience.CircuitBreaker.stop(cb)
+      CircuitBreaker.stop(cb)
       Connection.stop(conn)
       Process.sleep(500)
     end

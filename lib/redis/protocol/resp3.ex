@@ -155,6 +155,10 @@ defmodule Redis.Protocol.RESP3 do
     end
   end
 
+  defp parse_double("nan" <> _), do: :nan
+  defp parse_double("inf"), do: :inf
+  defp parse_double("-inf"), do: :neg_inf
+
   defp parse_double(str) do
     case Float.parse(str) do
       {f, ""} -> f

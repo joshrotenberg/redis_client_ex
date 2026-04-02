@@ -37,6 +37,7 @@ defmodule Redis.Sentinel do
 
   alias Redis.Connection
   alias Redis.Protocol.RESP2
+  alias Redis.Sentinel.Monitor
 
   require Logger
 
@@ -138,7 +139,7 @@ defmodule Redis.Sentinel do
     # Try each sentinel until we can start a monitor
     monitor_pid =
       Enum.find_value(state.sentinels, fn {host, port} ->
-        case Redis.Sentinel.Monitor.start_link(
+        case Monitor.start_link(
                sentinel_host: host,
                sentinel_port: port,
                sentinel_password: state.sentinel_password,
@@ -255,7 +256,7 @@ defmodule Redis.Sentinel do
   def terminate(_reason, state) do
     if state.monitor do
       try do
-        Redis.Sentinel.Monitor.stop(state.monitor)
+        Monitor.stop(state.monitor)
       catch
         :exit, _ -> :ok
       end
@@ -275,46 +276,37 @@ defmodule Redis.Sentinel do
   # -------------------------------------------------------------------
 
   defp resolve_and_connect(state) do
-    case resolve_address(state) do
-      {:ok, host, port} ->
-        conn_opts =
-          [
-            host: host,
-            port: port,
-            protocol: state.protocol,
-            timeout: state.timeout
-          ]
-          |> maybe_put(:password, state.password)
-          |> maybe_put(:username, state.username)
-          |> maybe_put(:database, state.database)
-
-        case Connection.start_link(conn_opts) do
-          {:ok, conn} ->
-            # Verify role
-            case verify_role(conn, state.role) do
-              :ok ->
-                Logger.debug("Redis.Sentinel: connected to #{state.role} at #{host}:#{port}")
-
-                {:ok,
-                 %{
-                   state
-                   | conn: conn,
-                     current_addr: {host, port},
-                     backoff_current: state.backoff_initial
-                 }}
-
-              {:error, :wrong_role} ->
-                Connection.stop(conn)
-                {:error, :wrong_role}
-            end
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
+    with {:ok, host, port} <- resolve_address(state),
+         conn_opts = build_conn_opts(state, host, port),
+         {:ok, conn} <- Connection.start_link(conn_opts) do
+      verify_and_finalize(state, conn, host, port)
     end
+  end
+
+  defp verify_and_finalize(state, conn, host, port) do
+    case verify_role(conn, state.role) do
+      :ok ->
+        Logger.debug("Redis.Sentinel: connected to #{state.role} at #{host}:#{port}")
+
+        {:ok,
+         %{
+           state
+           | conn: conn,
+             current_addr: {host, port},
+             backoff_current: state.backoff_initial
+         }}
+
+      {:error, :wrong_role} ->
+        Connection.stop(conn)
+        {:error, :wrong_role}
+    end
+  end
+
+  defp build_conn_opts(state, host, port) do
+    [host: host, port: port, protocol: state.protocol, timeout: state.timeout]
+    |> maybe_put(:password, state.password)
+    |> maybe_put(:username, state.username)
+    |> maybe_put(:database, state.database)
   end
 
   defp resolve_address(state) do
@@ -388,7 +380,7 @@ defmodule Redis.Sentinel do
     case :gen_tcp.recv(socket, 0, state.sentinel_timeout) do
       {:ok, data} ->
         case RESP2.decode(data) do
-          {:ok, replicas, _} when is_list(replicas) and length(replicas) > 0 ->
+          {:ok, [_ | _] = replicas, _} ->
             # Pick a random replica; each replica is a flat list of key-value pairs
             replica = Enum.random(replicas)
             replica_map = flat_list_to_map(replica)
@@ -462,7 +454,7 @@ defmodule Redis.Sentinel do
       str when is_binary(str) ->
         case String.split(str, ":") do
           [host, port_str] -> {host, String.to_integer(port_str)}
-          [host] -> {host, 26379}
+          [host] -> {host, 26_379}
         end
     end)
   end

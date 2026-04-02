@@ -176,27 +176,11 @@ defmodule Redis.PubSub do
   end
 
   def handle_call({:unsubscribe, channels, subscriber}, _from, %{state: :ready} = state) do
-    # Remove subscriber from local tracking
     {state, channels_to_unsub} =
-      Enum.reduce(channels, {state, []}, fn ch, {s, unsub} ->
-        case Map.get(s.channels, ch) do
-          nil ->
-            {s, unsub}
-
-          subs ->
-            new_subs = MapSet.delete(subs, subscriber)
-
-            if MapSet.size(new_subs) == 0 do
-              {%{s | channels: Map.delete(s.channels, ch)}, [ch | unsub]}
-            else
-              {%{s | channels: Map.put(s.channels, ch, new_subs)}, unsub}
-            end
-        end
-      end)
+      remove_subscriber_from_registry(channels, subscriber, state, :channels)
 
     state = maybe_demonitor(state, subscriber)
 
-    # Only send UNSUBSCRIBE if no subscribers left for the channel
     if channels_to_unsub != [] do
       data = RESP2.encode(["UNSUBSCRIBE" | channels_to_unsub])
       :gen_tcp.send(state.socket, data)
@@ -224,21 +208,7 @@ defmodule Redis.PubSub do
 
   def handle_call({:punsubscribe, patterns, subscriber}, _from, %{state: :ready} = state) do
     {state, patterns_to_unsub} =
-      Enum.reduce(patterns, {state, []}, fn pat, {s, unsub} ->
-        case Map.get(s.patterns, pat) do
-          nil ->
-            {s, unsub}
-
-          subs ->
-            new_subs = MapSet.delete(subs, subscriber)
-
-            if MapSet.size(new_subs) == 0 do
-              {%{s | patterns: Map.delete(s.patterns, pat)}, [pat | unsub]}
-            else
-              {%{s | patterns: Map.put(s.patterns, pat, new_subs)}, unsub}
-            end
-        end
-      end)
+      remove_subscriber_from_registry(patterns, subscriber, state, :patterns)
 
     state = maybe_demonitor(state, subscriber)
 
@@ -427,7 +397,9 @@ defmodule Redis.PubSub do
     in_channels = Enum.any?(state.channels, fn {_ch, subs} -> MapSet.member?(subs, pid) end)
     in_patterns = Enum.any?(state.patterns, fn {_pat, subs} -> MapSet.member?(subs, pid) end)
 
-    if not in_channels and not in_patterns do
+    if in_channels or in_patterns do
+      state
+    else
       case Map.pop(state.monitors, pid) do
         {nil, _} ->
           state
@@ -436,8 +408,36 @@ defmodule Redis.PubSub do
           Process.demonitor(ref, [:flush])
           %{state | monitors: monitors}
       end
-    else
-      state
+    end
+  end
+
+  defp remove_subscriber_from_registry(keys, subscriber, state, registry_key) do
+    registry = Map.fetch!(state, registry_key)
+
+    {new_registry, to_unsub} = partition_registry_by_subscriber(registry, keys, subscriber)
+
+    {Map.put(state, registry_key, new_registry), to_unsub}
+  end
+
+  defp partition_registry_by_subscriber(registry, keys, subscriber) do
+    Enum.reduce(keys, {registry, []}, fn key, {reg, unsub} ->
+      update_registry_entry(reg, key, subscriber, unsub)
+    end)
+  end
+
+  defp update_registry_entry(reg, key, subscriber, unsub) do
+    case Map.get(reg, key) do
+      nil ->
+        {reg, unsub}
+
+      subs ->
+        new_subs = MapSet.delete(subs, subscriber)
+
+        if MapSet.size(new_subs) == 0 do
+          {Map.delete(reg, key), [key | unsub]}
+        else
+          {Map.put(reg, key, new_subs), unsub}
+        end
     end
   end
 

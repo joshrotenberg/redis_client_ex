@@ -382,36 +382,20 @@ defmodule Redis.Connection do
   defp handshake(state) do
     with {:ok, state} <- negotiate_protocol(state),
          {:ok, state} <- maybe_auth(state),
-         {:ok, state} <- maybe_select(state),
-         {:ok, state} <- maybe_set_client_name(state) do
-      {:ok, state}
+         {:ok, state} <- maybe_select(state) do
+      maybe_set_client_name(state)
     end
   end
 
   defp negotiate_protocol(%{protocol: :resp3} = state) do
-    args =
-      case {state.username, state.password} do
-        {nil, nil} -> ["HELLO", "3"]
-        {nil, pw} -> ["HELLO", "3", "AUTH", "default", pw]
-        {user, pw} -> ["HELLO", "3", "AUTH", user, pw]
-      end
+    args = hello_args(state.username, state.password)
 
     case sync_command(state, args) do
       {:ok, response, state} when is_map(response) and not is_struct(response) ->
         {:ok, %{state | protocol: :resp3}}
 
       {:ok, %Redis.Error{message: msg}, _state} ->
-        cond do
-          String.contains?(msg, "WRONGPASS") or String.contains?(msg, "invalid password") ->
-            {:error, {:auth_failed, msg}}
-
-          String.contains?(msg, "NOAUTH") ->
-            {:error, {:auth_required, msg}}
-
-          true ->
-            Logger.debug("Redis: HELLO 3 not supported, falling back to RESP2")
-            {:ok, %{state | protocol: :resp2}}
-        end
+        classify_hello_error(msg, state)
 
       {:error, reason} ->
         {:error, {:handshake_failed, reason}}
@@ -419,6 +403,24 @@ defmodule Redis.Connection do
   end
 
   defp negotiate_protocol(%{protocol: :resp2} = state), do: {:ok, state}
+
+  defp hello_args(nil, nil), do: ["HELLO", "3"]
+  defp hello_args(nil, pw), do: ["HELLO", "3", "AUTH", "default", pw]
+  defp hello_args(user, pw), do: ["HELLO", "3", "AUTH", user, pw]
+
+  defp classify_hello_error(msg, state) do
+    cond do
+      String.contains?(msg, "WRONGPASS") or String.contains?(msg, "invalid password") ->
+        {:error, {:auth_failed, msg}}
+
+      String.contains?(msg, "NOAUTH") ->
+        {:error, {:auth_required, msg}}
+
+      true ->
+        Logger.debug("Redis: HELLO 3 not supported, falling back to RESP2")
+        {:ok, %{state | protocol: :resp2}}
+    end
+  end
 
   defp maybe_auth(%{password: nil} = state), do: {:ok, state}
   defp maybe_auth(%{protocol: :resp3} = state), do: {:ok, state}
@@ -533,63 +535,66 @@ defmodule Redis.Connection do
     state = drain_pushes(state)
 
     case :queue.peek(state.callers) do
-      :empty ->
+      :empty -> state
+      {:value, {from, type}} -> process_caller(state, from, type)
+    end
+  end
+
+  defp process_caller(state, from, :single) do
+    case decode(state.protocol, state.buffer) do
+      {:ok, response, rest} ->
+        GenServer.reply(from, wrap_response(response))
+        advance_and_continue(state, rest)
+
+      {:continuation, _} ->
         state
+    end
+  end
 
-      {:value, {from, :single}} ->
-        case decode(state.protocol, state.buffer) do
-          {:ok, response, rest} ->
-            GenServer.reply(from, wrap_response(response))
-            state = %{state | buffer: rest, callers: :queue.drop(state.callers)}
-            process_buffer(state)
+  defp process_caller(state, from, {:pipeline, count}) do
+    case decode_n(state.protocol, state.buffer, count) do
+      {:ok, responses, rest} ->
+        GenServer.reply(from, {:ok, responses})
+        advance_and_continue(state, rest)
 
-          {:continuation, _} ->
-            state
-        end
+      {:continuation, _} ->
+        state
+    end
+  end
 
-      {:value, {from, {:pipeline, count}}} ->
-        case decode_n(state.protocol, state.buffer, count) do
-          {:ok, responses, rest} ->
-            GenServer.reply(from, {:ok, responses})
-            state = %{state | buffer: rest, callers: :queue.drop(state.callers)}
-            process_buffer(state)
+  defp process_caller(state, from, {:transaction, count}) do
+    case decode_n(state.protocol, state.buffer, count) do
+      {:ok, responses, rest} ->
+        GenServer.reply(from, transaction_reply(responses))
+        advance_and_continue(state, rest)
 
-          {:continuation, _} ->
-            state
-        end
+      {:continuation, _} ->
+        state
+    end
+  end
 
-      {:value, {from, {:transaction, count}}} ->
-        case decode_n(state.protocol, state.buffer, count) do
-          {:ok, responses, rest} ->
-            exec_result = List.last(responses)
+  defp process_caller(state, from, :noreply) do
+    # Expect exactly one response: the OK from CLIENT REPLY ON
+    case decode(state.protocol, state.buffer) do
+      {:ok, _response, rest} ->
+        GenServer.reply(from, :ok)
+        advance_and_continue(state, rest)
 
-            reply =
-              case exec_result do
-                nil -> {:error, :transaction_aborted}
-                %Redis.Error{} = err -> {:error, err}
-                results when is_list(results) -> {:ok, results}
-                other -> {:ok, other}
-              end
+      {:continuation, _} ->
+        state
+    end
+  end
 
-            GenServer.reply(from, reply)
-            state = %{state | buffer: rest, callers: :queue.drop(state.callers)}
-            process_buffer(state)
+  defp advance_and_continue(state, rest) do
+    process_buffer(%{state | buffer: rest, callers: :queue.drop(state.callers)})
+  end
 
-          {:continuation, _} ->
-            state
-        end
-
-      {:value, {from, :noreply}} ->
-        # Expect exactly one response: the OK from CLIENT REPLY ON
-        case decode(state.protocol, state.buffer) do
-          {:ok, _response, rest} ->
-            GenServer.reply(from, :ok)
-            state = %{state | buffer: rest, callers: :queue.drop(state.callers)}
-            process_buffer(state)
-
-          {:continuation, _} ->
-            state
-        end
+  defp transaction_reply(responses) do
+    case List.last(responses) do
+      nil -> {:error, :transaction_aborted}
+      %Redis.Error{} = err -> {:error, err}
+      results when is_list(results) -> {:ok, results}
+      other -> {:ok, other}
     end
   end
 

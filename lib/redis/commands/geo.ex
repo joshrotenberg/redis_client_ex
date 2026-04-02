@@ -28,85 +28,71 @@ defmodule Redis.Commands.Geo do
 
   @spec geosearch(String.t(), keyword()) :: [String.t()]
   def geosearch(key, opts \\ []) do
-    cmd = ["GEOSEARCH", key]
-    cmd = if opts[:frommember], do: cmd ++ ["FROMMEMBER", opts[:frommember]], else: cmd
-
-    cmd =
-      if opts[:fromlonlat],
-        do:
-          cmd ++
-            [
-              "FROMLONLAT",
-              to_string(elem(opts[:fromlonlat], 0)),
-              to_string(elem(opts[:fromlonlat], 1))
-            ],
-        else: cmd
-
-    cmd =
-      if opts[:byradius],
-        do: cmd ++ ["BYRADIUS", to_string(elem(opts[:byradius], 0)), elem(opts[:byradius], 1)],
-        else: cmd
-
-    cmd =
-      if opts[:bybox],
-        do:
-          cmd ++
-            [
-              "BYBOX",
-              to_string(elem(opts[:bybox], 0)),
-              to_string(elem(opts[:bybox], 1)),
-              elem(opts[:bybox], 2)
-            ],
-        else: cmd
-
-    cmd = if opts[:asc], do: cmd ++ ["ASC"], else: cmd
-    cmd = if opts[:desc], do: cmd ++ ["DESC"], else: cmd
-    cmd = if opts[:count], do: cmd ++ ["COUNT", to_string(opts[:count])], else: cmd
-    cmd = if opts[:any], do: cmd ++ ["ANY"], else: cmd
-    cmd = if opts[:withcoord], do: cmd ++ ["WITHCOORD"], else: cmd
-    cmd = if opts[:withdist], do: cmd ++ ["WITHDIST"], else: cmd
-    cmd = if opts[:withhash], do: cmd ++ ["WITHHASH"], else: cmd
-    cmd
+    ["GEOSEARCH", key]
+    |> append_search_origin(opts)
+    |> append_search_shape(opts)
+    |> append_search_order(opts)
+    |> append_search_result_opts(opts)
   end
 
   @spec geosearchstore(String.t(), String.t(), keyword()) :: [String.t()]
   def geosearchstore(destination, source, opts \\ []) do
-    cmd = ["GEOSEARCHSTORE", destination, source]
+    cmd =
+      ["GEOSEARCHSTORE", destination, source]
+      |> append_search_origin(opts)
+      |> append_search_shape(opts)
+      |> append_search_order(opts)
+
+    cmd = if opts[:storedist], do: cmd ++ ["STOREDIST"], else: cmd
+    cmd
+  end
+
+  defp append_search_origin(cmd, opts) do
     cmd = if opts[:frommember], do: cmd ++ ["FROMMEMBER", opts[:frommember]], else: cmd
 
-    cmd =
-      if opts[:fromlonlat],
-        do:
-          cmd ++
-            [
-              "FROMLONLAT",
-              to_string(elem(opts[:fromlonlat], 0)),
-              to_string(elem(opts[:fromlonlat], 1))
-            ],
-        else: cmd
+    if opts[:fromlonlat] do
+      cmd ++
+        [
+          "FROMLONLAT",
+          to_string(elem(opts[:fromlonlat], 0)),
+          to_string(elem(opts[:fromlonlat], 1))
+        ]
+    else
+      cmd
+    end
+  end
 
+  defp append_search_shape(cmd, opts) do
     cmd =
       if opts[:byradius],
         do: cmd ++ ["BYRADIUS", to_string(elem(opts[:byradius], 0)), elem(opts[:byradius], 1)],
         else: cmd
 
-    cmd =
-      if opts[:bybox],
-        do:
-          cmd ++
-            [
-              "BYBOX",
-              to_string(elem(opts[:bybox], 0)),
-              to_string(elem(opts[:bybox], 1)),
-              elem(opts[:bybox], 2)
-            ],
-        else: cmd
+    if opts[:bybox] do
+      cmd ++
+        [
+          "BYBOX",
+          to_string(elem(opts[:bybox], 0)),
+          to_string(elem(opts[:bybox], 1)),
+          elem(opts[:bybox], 2)
+        ]
+    else
+      cmd
+    end
+  end
 
+  defp append_search_order(cmd, opts) do
     cmd = if opts[:asc], do: cmd ++ ["ASC"], else: cmd
     cmd = if opts[:desc], do: cmd ++ ["DESC"], else: cmd
     cmd = if opts[:count], do: cmd ++ ["COUNT", to_string(opts[:count])], else: cmd
     cmd = if opts[:any], do: cmd ++ ["ANY"], else: cmd
-    cmd = if opts[:storedist], do: cmd ++ ["STOREDIST"], else: cmd
+    cmd
+  end
+
+  defp append_search_result_opts(cmd, opts) do
+    cmd = if opts[:withcoord], do: cmd ++ ["WITHCOORD"], else: cmd
+    cmd = if opts[:withdist], do: cmd ++ ["WITHDIST"], else: cmd
+    cmd = if opts[:withhash], do: cmd ++ ["WITHHASH"], else: cmd
     cmd
   end
 

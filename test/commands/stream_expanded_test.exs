@@ -87,7 +87,7 @@ defmodule Redis.Commands.StreamExpandedTest do
 
   describe "XCLAIM" do
     test "basic" do
-      assert Stream.xclaim("stream", "group", "consumer", 60000, ["1-0", "2-0"]) ==
+      assert Stream.xclaim("stream", "group", "consumer", 60_000, ["1-0", "2-0"]) ==
                ["XCLAIM", "stream", "group", "consumer", "60000", "1-0", "2-0"]
     end
 
@@ -101,7 +101,7 @@ defmodule Redis.Commands.StreamExpandedTest do
 
   describe "XAUTOCLAIM" do
     test "basic" do
-      assert Stream.xautoclaim("stream", "group", "consumer", 60000, "0-0") ==
+      assert Stream.xautoclaim("stream", "group", "consumer", 60_000, "0-0") ==
                ["XAUTOCLAIM", "stream", "group", "consumer", "60000", "0-0"]
     end
 

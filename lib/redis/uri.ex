@@ -28,69 +28,68 @@ defmodule Redis.URI do
   """
   @spec parse(String.t()) :: keyword()
   def parse(uri_string) when is_binary(uri_string) do
-    # Normalize scheme for URI.parse
-    normalized =
-      uri_string
-      |> String.replace(~r/^rediss:\/\//, "https://")
-      |> String.replace(~r/^redis:\/\//, "http://")
-      |> String.replace(~r/^valkey:\/\//, "http://")
-
+    normalized = normalize_scheme(uri_string)
     ssl = String.starts_with?(uri_string, "rediss://")
-
     uri = URI.parse(normalized)
 
-    opts = []
-    opts = if uri.host && uri.host != "", do: [{:host, uri.host} | opts], else: opts
+    []
+    |> prepend_host(uri)
+    |> prepend_port(uri_string)
+    |> prepend_userinfo(uri)
+    |> prepend_database(uri)
+    |> prepend_ssl(ssl)
+    |> Enum.reverse()
+  end
 
-    # uri.port will be 80/443 from http/https normalization — only use if original URI had a port
+  defp normalize_scheme(uri_string) do
+    uri_string
+    |> String.replace(~r/^rediss:\/\//, "https://")
+    |> String.replace(~r/^redis:\/\//, "http://")
+    |> String.replace(~r/^valkey:\/\//, "http://")
+  end
+
+  defp prepend_host(opts, uri) do
+    if uri.host && uri.host != "", do: [{:host, uri.host} | opts], else: opts
+  end
+
+  defp prepend_port(opts, uri_string) do
     actual_port =
       case Regex.run(~r/:(\d+)(?:\/|$)/, uri_string) do
         [_, port_str] -> String.to_integer(port_str)
         _ -> @default_port
       end
 
-    opts = [{:port, actual_port} | opts]
-
-    opts =
-      case uri.userinfo do
-        nil ->
-          opts
-
-        info ->
-          case String.split(info, ":", parts: 2) do
-            ["", password] ->
-              [{:password, URI.decode(password)} | opts]
-
-            [username, password] ->
-              [{:username, URI.decode(username)}, {:password, URI.decode(password)} | opts]
-
-            [password] ->
-              [{:password, URI.decode(password)} | opts]
-          end
-      end
-
-    opts =
-      case uri.path do
-        nil ->
-          opts
-
-        "" ->
-          opts
-
-        "/" ->
-          opts
-
-        "/" <> db_str ->
-          case Integer.parse(db_str) do
-            {db, ""} when db > 0 -> [{:database, db} | opts]
-            _ -> opts
-          end
-      end
-
-    opts = if ssl, do: [{:ssl, true} | opts], else: opts
-
-    Enum.reverse(opts)
+    [{:port, actual_port} | opts]
   end
+
+  defp prepend_userinfo(opts, %{userinfo: nil}), do: opts
+
+  defp prepend_userinfo(opts, %{userinfo: info}) do
+    case String.split(info, ":", parts: 2) do
+      ["", password] ->
+        [{:password, URI.decode(password)} | opts]
+
+      [username, password] ->
+        [{:username, URI.decode(username)}, {:password, URI.decode(password)} | opts]
+
+      [password] ->
+        [{:password, URI.decode(password)} | opts]
+    end
+  end
+
+  defp prepend_database(opts, %{path: path}) when path in [nil, "", "/"], do: opts
+
+  defp prepend_database(opts, %{path: "/" <> db_str}) do
+    case Integer.parse(db_str) do
+      {db, ""} when db > 0 -> [{:database, db} | opts]
+      _ -> opts
+    end
+  end
+
+  defp prepend_database(opts, _uri), do: opts
+
+  defp prepend_ssl(opts, true), do: [{:ssl, true} | opts]
+  defp prepend_ssl(opts, false), do: opts
 
   @doc """
   Converts connection options back to a Redis URI string.

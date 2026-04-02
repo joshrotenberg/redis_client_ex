@@ -1,8 +1,8 @@
 defmodule Redis.PubSub.ShardedTest do
   use ExUnit.Case, async: false
 
-  alias Redis.PubSub.Sharded
   alias Redis.Connection
+  alias Redis.PubSub.Sharded
 
   @moduletag timeout: 60_000
 
@@ -183,20 +183,20 @@ defmodule Redis.PubSub.ShardedTest do
     ports = [port, port + 1, port + 2]
 
     Enum.find_value(ports, {:error, :publish_failed}, fn p ->
-      case Connection.start_link(host: "127.0.0.1", port: p) do
-        {:ok, conn} ->
-          result = Connection.command(conn, ["SPUBLISH", channel, message])
-          Connection.stop(conn)
-
-          case result do
-            {:ok, _count} -> true
-            _ -> nil
-          end
-
-        _ ->
-          nil
-      end
+      try_spublish_on_port(p, channel, message)
     end)
+  end
+
+  defp try_spublish_on_port(port, channel, message) do
+    case Connection.start_link(host: "127.0.0.1", port: port) do
+      {:ok, conn} ->
+        result = Connection.command(conn, ["SPUBLISH", channel, message])
+        Connection.stop(conn)
+        if match?({:ok, _}, result), do: true, else: nil
+
+      _ ->
+        nil
+    end
   end
 
   defp relay_loop(parent, tag) do

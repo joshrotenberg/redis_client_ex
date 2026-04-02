@@ -26,8 +26,8 @@ defmodule Redis.Cluster do
 
   use GenServer
 
-  alias Redis.Connection
   alias Redis.Cluster.{Router, Topology}
+  alias Redis.Connection
 
   require Logger
 
@@ -211,47 +211,60 @@ defmodule Redis.Cluster do
   defp discover_topology(state) do
     # Try each seed node until one works
     Enum.reduce_while(state.seed_nodes, {:error, :no_reachable_node}, fn {host, port}, _acc ->
-      case connect_node(state, host, port) do
-        {:ok, conn} ->
-          case Connection.command(conn, ["CLUSTER", "SLOTS"]) do
-            {:ok, slots_data} ->
-              parsed = Topology.parse_slots(slots_data)
-              slot_entries = Topology.build_slot_map(parsed)
-
-              # Populate ETS
-              :ets.delete_all_objects(state.slot_table)
-              :ets.insert(state.slot_table, slot_entries)
-
-              # Ensure connections to all discovered nodes
-              nodes = Enum.uniq(Enum.map(parsed, fn {_, _, h, p} -> {h, p} end))
-
-              connections =
-                Enum.reduce(nodes, %{{host, port} => conn}, fn {h, p}, conns ->
-                  if Map.has_key?(conns, {h, p}) do
-                    conns
-                  else
-                    case connect_node(state, h, p) do
-                      {:ok, node_conn} -> Map.put(conns, {h, p}, node_conn)
-                      {:error, _} -> conns
-                    end
-                  end
-                end)
-
-              Logger.debug(
-                "Redis.Cluster: discovered #{length(nodes)} nodes, #{length(slot_entries)} slots"
-              )
-
-              {:halt, {:ok, %{state | connections: connections}}}
-
-            {:error, reason} ->
-              Connection.stop(conn)
-              {:cont, {:error, reason}}
-          end
-
-        {:error, _reason} ->
-          {:cont, {:error, :no_reachable_node}}
+      case discover_from_node(state, host, port) do
+        {:ok, state} -> {:halt, {:ok, state}}
+        {:error, reason} -> {:cont, {:error, reason}}
       end
     end)
+  end
+
+  defp discover_from_node(state, host, port) do
+    case connect_node(state, host, port) do
+      {:ok, conn} ->
+        case Connection.command(conn, ["CLUSTER", "SLOTS"]) do
+          {:ok, slots_data} ->
+            apply_topology(state, slots_data, {host, port}, conn)
+
+          {:error, reason} ->
+            Connection.stop(conn)
+            {:error, reason}
+        end
+
+      {:error, _reason} ->
+        {:error, :no_reachable_node}
+    end
+  end
+
+  defp apply_topology(state, slots_data, {host, port}, conn) do
+    parsed = Topology.parse_slots(slots_data)
+    slot_entries = Topology.build_slot_map(parsed)
+
+    :ets.delete_all_objects(state.slot_table)
+    :ets.insert(state.slot_table, slot_entries)
+
+    nodes = Enum.uniq(Enum.map(parsed, fn {_, _, h, p} -> {h, p} end))
+    connections = connect_discovered_nodes(state, nodes, %{{host, port} => conn})
+
+    Logger.debug(
+      "Redis.Cluster: discovered #{length(nodes)} nodes, #{length(slot_entries)} slots"
+    )
+
+    {:ok, %{state | connections: connections}}
+  end
+
+  defp connect_discovered_nodes(state, nodes, initial_conns) do
+    Enum.reduce(nodes, initial_conns, fn {h, p}, conns ->
+      maybe_connect_node(state, conns, h, p)
+    end)
+  end
+
+  defp maybe_connect_node(_state, conns, h, p) when is_map_key(conns, {h, p}), do: conns
+
+  defp maybe_connect_node(state, conns, h, p) do
+    case connect_node(state, h, p) do
+      {:ok, node_conn} -> Map.put(conns, {h, p}, node_conn)
+      {:error, _} -> conns
+    end
   end
 
   defp refresh_topology(state) do
@@ -266,33 +279,25 @@ defmodule Redis.Cluster do
 
     case result do
       {:ok, slots_data} ->
-        parsed = Topology.parse_slots(slots_data)
-        slot_entries = Topology.build_slot_map(parsed)
-
-        :ets.delete_all_objects(state.slot_table)
-        :ets.insert(state.slot_table, slot_entries)
-
-        # Connect to any new nodes
-        nodes = Enum.uniq(Enum.map(parsed, fn {_, _, h, p} -> {h, p} end))
-
-        connections =
-          Enum.reduce(nodes, state.connections, fn {h, p}, conns ->
-            if Map.has_key?(conns, {h, p}) do
-              conns
-            else
-              case connect_node(state, h, p) do
-                {:ok, conn} -> Map.put(conns, {h, p}, conn)
-                {:error, _} -> conns
-              end
-            end
-          end)
-
-        {:ok, %{state | connections: connections}}
+        refresh_from_slots(state, slots_data)
 
       nil ->
         # Fall back to seed nodes
         discover_topology(%{state | connections: %{}})
     end
+  end
+
+  defp refresh_from_slots(state, slots_data) do
+    parsed = Topology.parse_slots(slots_data)
+    slot_entries = Topology.build_slot_map(parsed)
+
+    :ets.delete_all_objects(state.slot_table)
+    :ets.insert(state.slot_table, slot_entries)
+
+    nodes = Enum.uniq(Enum.map(parsed, fn {_, _, h, p} -> {h, p} end))
+    connections = connect_discovered_nodes(state, nodes, state.connections)
+
+    {:ok, %{state | connections: connections}}
   end
 
   # -------------------------------------------------------------------
@@ -306,42 +311,14 @@ defmodule Redis.Cluster do
   defp execute_with_redirects(state, slot, args, type, redirects_left) do
     case get_connection_for_slot(state, slot) do
       {:ok, conn} ->
-        case execute_on(conn, args, type) do
-          {:error, %Redis.Error{message: "MOVED " <> rest}} ->
-            # MOVED <slot> <host>:<port> — refresh topology and retry
-            Logger.debug("Redis.Cluster: MOVED redirect: #{rest}")
-            {_new_slot, host, port} = parse_redirect(rest)
-
-            state = ensure_connection(state, host, port)
-
-            case refresh_topology(state) do
-              {:ok, state} -> execute_with_redirects(state, slot, args, type, redirects_left - 1)
-              {:error, _} -> execute_with_redirects(state, slot, args, type, redirects_left - 1)
-            end
-
-          {:error, %Redis.Error{message: "ASK " <> rest}} ->
-            # ASK <slot> <host>:<port> — one-shot redirect with ASKING
-            Logger.debug("Redis.Cluster: ASK redirect: #{rest}")
-            {_new_slot, host, port} = parse_redirect(rest)
-
-            state = ensure_connection(state, host, port)
-
-            case Map.get(state.connections, {host, port}) do
-              nil ->
-                {{:error, :node_unavailable}, state}
-
-              target_conn ->
-                # Send ASKING then the command as a pipeline
-                case Connection.pipeline(target_conn, [["ASKING"], args]) do
-                  {:ok, [_asking_ok, result]} -> {wrap_result(result), state}
-                  {:ok, _other} -> {{:error, :ask_failed}, state}
-                  error -> {error, state}
-                end
-            end
-
-          result ->
-            {result, state}
-        end
+        handle_execution_result(
+          execute_on(conn, args, type),
+          state,
+          slot,
+          args,
+          type,
+          redirects_left
+        )
 
       {:error, _} = error ->
         # No connection for this slot — try refreshing topology
@@ -349,6 +326,60 @@ defmodule Redis.Cluster do
           {:ok, state} -> execute_with_redirects(state, slot, args, type, redirects_left - 1)
           _ -> {error, state}
         end
+    end
+  end
+
+  defp handle_execution_result(
+         {:error, %Redis.Error{message: "MOVED " <> rest}},
+         state,
+         slot,
+         args,
+         type,
+         redirects_left
+       ) do
+    Logger.debug("Redis.Cluster: MOVED redirect: #{rest}")
+    {_new_slot, host, port} = parse_redirect(rest)
+    state = ensure_connection(state, host, port)
+    state = refresh_topology_best_effort(state)
+    execute_with_redirects(state, slot, args, type, redirects_left - 1)
+  end
+
+  defp handle_execution_result(
+         {:error, %Redis.Error{message: "ASK " <> rest}},
+         state,
+         _slot,
+         args,
+         _type,
+         _redirects_left
+       ) do
+    Logger.debug("Redis.Cluster: ASK redirect: #{rest}")
+    {_new_slot, host, port} = parse_redirect(rest)
+    state = ensure_connection(state, host, port)
+    handle_ask_redirect(state, host, port, args)
+  end
+
+  defp handle_execution_result(result, state, _slot, _args, _type, _redirects_left) do
+    {result, state}
+  end
+
+  defp handle_ask_redirect(state, host, port, args) do
+    case Map.get(state.connections, {host, port}) do
+      nil ->
+        {{:error, :node_unavailable}, state}
+
+      target_conn ->
+        case Connection.pipeline(target_conn, [["ASKING"], args]) do
+          {:ok, [_asking_ok, result]} -> {wrap_result(result), state}
+          {:ok, _other} -> {{:error, :ask_failed}, state}
+          error -> {error, state}
+        end
+    end
+  end
+
+  defp refresh_topology_best_effort(state) do
+    case refresh_topology(state) do
+      {:ok, state} -> state
+      {:error, _} -> state
     end
   end
 
@@ -362,66 +393,64 @@ defmodule Redis.Cluster do
   # -------------------------------------------------------------------
 
   defp execute_split_pipeline(state, commands) do
-    # Tag each command with its original index and compute its slot
-    indexed_commands =
-      commands
-      |> Enum.with_index()
-      |> Enum.map(fn {cmd, idx} ->
-        slot =
-          case Router.slot_for_command(cmd) do
-            {:ok, s} -> s
-            {:error, :no_key} -> :no_key
-          end
-
-        {idx, slot, cmd}
-      end)
-
-    # Group commands by slot, preserving order within each group
-    groups =
-      indexed_commands
-      |> Enum.group_by(fn {_idx, slot, _cmd} -> slot end)
-
-    # For key-less commands, pick any connection
-    default_conn =
-      case any_connection(state) do
-        {:ok, conn} -> conn
-        _ -> nil
-      end
-
-    # Send each group in parallel using Task.async
-    tasks =
-      Enum.map(groups, fn {slot, entries} ->
-        conn =
-          case slot do
-            :no_key ->
-              default_conn
-
-            s ->
-              case get_connection_for_slot(state, s) do
-                {:ok, c} -> c
-                _ -> nil
-              end
-          end
-
-        indices = Enum.map(entries, fn {idx, _s, _c} -> idx end)
-        cmds = Enum.map(entries, fn {_idx, _s, c} -> c end)
-
-        Task.async(fn ->
-          if conn do
-            case Connection.pipeline(conn, cmds) do
-              {:ok, results} -> {:ok, Enum.zip(indices, results)}
-              {:error, reason} -> {:error, reason, indices}
-            end
-          else
-            {:error, :no_connection, indices}
-          end
-        end)
-      end)
-
-    # Await all tasks
+    groups = group_commands_by_slot(commands)
+    default_conn = default_connection(state)
+    tasks = dispatch_pipeline_groups(state, groups, default_conn)
     task_results = Task.await_many(tasks, state.timeout || 5_000)
+    assemble_pipeline_results(task_results)
+  end
 
-    # Check for errors and reassemble
+  defp group_commands_by_slot(commands) do
+    commands
+    |> Enum.with_index()
+    |> Enum.map(fn {cmd, idx} ->
+      slot =
+        case Router.slot_for_command(cmd) do
+          {:ok, s} -> s
+          {:error, :no_key} -> :no_key
+        end
+
+      {idx, slot, cmd}
+    end)
+    |> Enum.group_by(fn {_idx, slot, _cmd} -> slot end)
+  end
+
+  defp default_connection(state) do
+    case any_connection(state) do
+      {:ok, conn} -> conn
+      _ -> nil
+    end
+  end
+
+  defp dispatch_pipeline_groups(state, groups, default_conn) do
+    Enum.map(groups, fn {slot, entries} ->
+      conn = connection_for_group(state, slot, default_conn)
+      indices = Enum.map(entries, fn {idx, _s, _c} -> idx end)
+      cmds = Enum.map(entries, fn {_idx, _s, c} -> c end)
+
+      Task.async(fn -> execute_pipeline_group(conn, cmds, indices) end)
+    end)
+  end
+
+  defp connection_for_group(_state, :no_key, default_conn), do: default_conn
+
+  defp connection_for_group(state, slot, _default_conn) do
+    case get_connection_for_slot(state, slot) do
+      {:ok, c} -> c
+      _ -> nil
+    end
+  end
+
+  defp execute_pipeline_group(nil, _cmds, indices), do: {:error, :no_connection, indices}
+
+  defp execute_pipeline_group(conn, cmds, indices) do
+    case Connection.pipeline(conn, cmds) do
+      {:ok, results} -> {:ok, Enum.zip(indices, results)}
+      {:error, reason} -> {:error, reason, indices}
+    end
+  end
+
+  defp assemble_pipeline_results(task_results) do
     {pairs, errors} =
       Enum.reduce(task_results, {[], []}, fn
         {:ok, idx_results}, {pairs, errs} ->

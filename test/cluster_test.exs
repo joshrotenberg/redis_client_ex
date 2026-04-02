@@ -167,7 +167,7 @@ defmodule Redis.ClusterTest do
     test "info returns cluster state", %{cluster: cluster} do
       info = Cluster.info(cluster)
       assert length(info.nodes) >= 3
-      assert info.slot_coverage == 16384
+      assert info.slot_coverage == 16_384
     end
 
     test "refresh updates topology", %{cluster: cluster} do

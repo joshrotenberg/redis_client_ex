@@ -13,6 +13,7 @@ defmodule Redis.MixProject do
       deps: deps(),
       docs: docs(),
       package: package(),
+      dialyzer: dialyzer(),
       name: "Redis",
       description:
         "Modern, full-featured Redis client for Elixir with RESP3, clustering, sentinel, client-side caching, and resilience patterns"
@@ -31,9 +32,19 @@ defmodule Redis.MixProject do
       {:telemetry, "~> 1.0", optional: true},
       {:jason, "~> 1.4", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
-      {:redis_server_wrapper, path: "../redis_server_wrapper", only: [:test, :bench]},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:redis_server_wrapper,
+       github: "joshrotenberg/redis_server_wrapper", only: [:test, :bench]},
       {:redix, "~> 1.5", only: :bench},
       {:benchee, "~> 1.0", only: :bench}
+    ]
+  end
+
+  defp dialyzer do
+    [
+      plt_add_apps: [:telemetry, :jason],
+      plt_core_path: "_build/#{Mix.env()}"
     ]
   end
 
