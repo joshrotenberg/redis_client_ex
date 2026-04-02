@@ -121,7 +121,7 @@ defmodule Redis.Cluster do
 
   @doc "Forces a topology refresh."
   @spec refresh(GenServer.server()) :: :ok | {:error, term()}
-  def refresh(cluster), do: GenServer.call(cluster, :refresh)
+  def refresh(cluster), do: GenServer.call(cluster, :refresh, 30_000)
 
   @spec stop(GenServer.server()) :: :ok
   def stop(cluster), do: GenServer.stop(cluster, :normal)
@@ -353,10 +353,10 @@ defmodule Redis.Cluster do
   end
 
   defp refresh_topology(state) do
-    # Try any existing connection first
+    # Try any existing connection first, with a short timeout to skip dead nodes quickly
     result =
       Enum.find_value(state.connections, fn {_addr, conn} ->
-        case Connection.command(conn, ["CLUSTER", "SLOTS"]) do
+        case Connection.command(conn, ["CLUSTER", "SLOTS"], timeout: 2_000) do
           {:ok, data} -> {:ok, data}
           _ -> nil
         end
@@ -380,7 +380,22 @@ defmodule Redis.Cluster do
     :ets.insert(state.slot_table, slot_entries)
 
     nodes = Enum.uniq(Enum.map(parsed, fn {_, _, h, p} -> {h, p} end))
-    connections = connect_discovered_nodes(state, nodes, state.connections)
+    node_set = MapSet.new(nodes)
+
+    # Drop connections to nodes no longer in the topology
+    {kept, stale} = Map.split_with(state.connections, fn {addr, _} -> addr in node_set end)
+
+    Enum.each(stale, fn {addr, conn} ->
+      Logger.debug("Redis.Cluster: dropping stale connection to #{inspect(addr)}")
+
+      try do
+        Connection.stop(conn)
+      catch
+        :exit, _ -> :ok
+      end
+    end)
+
+    connections = connect_discovered_nodes(state, nodes, kept)
 
     {:ok, %{state | connections: connections}}
   end
