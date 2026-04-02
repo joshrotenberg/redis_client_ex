@@ -9,19 +9,6 @@ Modern, full-featured Redis client for Elixir built on OTP.
 
 RESP3 native. Cluster-aware. Client-side caching. Resilience built in. Zero required dependencies.
 
-## Features
-
-- **RESP3 native** with RESP2 fallback for older servers
-- **Cluster** with topology discovery, hash slot routing, MOVED/ASK redirects, cross-slot pipeline splitting
-- **Sentinel** with master resolution, role verification, proactive failover via `+switch-master`
-- **Pub/Sub** with pattern subscriptions, sharded pub/sub (Redis 7+)
-- **Client-side caching** via RESP3 server-assisted invalidation + ETS
-- **Connection pool** with round-robin/random dispatch
-- **Resilience** patterns: circuit breaker, retry with backoff, request coalescing, bulkhead
-- **341 command builders** across 21 modules (strings, hashes, lists, sets, sorted sets, streams, JSON, search, time series, probabilistic data structures, and more)
-- **Lua scripting** with automatic EVALSHA/EVAL fallback
-- **Telemetry** events for connection lifecycle and command pipeline
-
 ## Installation
 
 ```elixir
@@ -34,34 +21,63 @@ end
 
 The Hex package is `redis_client_ex`, but the application and all modules use the `Redis` namespace.
 
-## Quick Start
+## Connecting
 
 ```elixir
+# Basic
 {:ok, conn} = Redis.start_link(port: 6379)
 
-# Commands
+# URI
+{:ok, conn} = Redis.start_link("redis://:secret@myhost:6380/2")
+
+# With authentication
+{:ok, conn} = Redis.start_link(host: "myhost", password: "secret")
+
+# TLS
+{:ok, conn} = Redis.start_link(host: "myhost", ssl: true)
+```
+
+## Supervision
+
+```elixir
+children = [
+  {Redis.Connection, port: 6379, name: :redis},
+  {Redis.Connection.Pool, pool_size: 10, port: 6379, name: :redis_pool}
+]
+
+Supervisor.start_link(children, strategy: :one_for_one)
+```
+
+## Connection Pool
+
+```elixir
+{:ok, pool} = Redis.Connection.Pool.start_link(
+  pool_size: 10,
+  port: 6379
+)
+
+Redis.Connection.Pool.command(pool, ["GET", "key"])
+```
+
+## Commands, Pipelines, and Transactions
+
+```elixir
 {:ok, "OK"} = Redis.command(conn, ["SET", "hello", "world"])
 {:ok, "world"} = Redis.command(conn, ["GET", "hello"])
 
-# Pipeline
+# Pipeline -- multiple commands in a single round-trip
 {:ok, ["OK", "OK", "1"]} = Redis.pipeline(conn, [
   ["SET", "a", "1"],
   ["SET", "b", "2"],
   ["GET", "a"]
 ])
 
-# Transaction
+# Transaction -- atomic MULTI/EXEC
 {:ok, [1, 2, 3]} = Redis.transaction(conn, [
   ["INCR", "counter"],
   ["INCR", "counter"],
   ["INCR", "counter"]
 ])
-```
-
-Connections also accept URIs:
-
-```elixir
-{:ok, conn} = Redis.start_link("redis://:secret@myhost:6380/2")
 ```
 
 ## Command Builders
@@ -153,17 +169,6 @@ Redis.Cache.command(cache, ["SET", "key", "value"])
 # and the next call fetches the new value automatically
 ```
 
-## Connection Pool
-
-```elixir
-{:ok, pool} = Redis.Connection.Pool.start_link(
-  pool_size: 10,
-  port: 6379
-)
-
-Redis.Connection.Pool.command(pool, ["GET", "key"])
-```
-
 ## Resilience
 
 ```elixir
@@ -179,16 +184,18 @@ Redis.Connection.Pool.command(pool, ["GET", "key"])
 Redis.Resilience.command(conn, ["GET", "key"])
 ```
 
-## Supervision
+## Features
 
-```elixir
-children = [
-  {Redis.Connection, port: 6379, name: :redis},
-  {Redis.Connection.Pool, pool_size: 10, port: 6379, name: :redis_pool}
-]
-
-Supervisor.start_link(children, strategy: :one_for_one)
-```
+- **RESP3 native** with RESP2 fallback for older servers
+- **Cluster** with topology discovery, hash slot routing, MOVED/ASK redirects, cross-slot pipeline splitting
+- **Sentinel** with master resolution, role verification, proactive failover via `+switch-master`
+- **Pub/Sub** with pattern subscriptions, sharded pub/sub (Redis 7+)
+- **Client-side caching** via RESP3 server-assisted invalidation + ETS
+- **Connection pool** with round-robin/random dispatch
+- **Resilience** patterns: circuit breaker, retry with backoff, request coalescing, bulkhead
+- **341 command builders** across 21 modules
+- **Lua scripting** with automatic EVALSHA/EVAL fallback
+- **Telemetry** events for connection lifecycle and command pipeline
 
 ## Benchmarks
 
