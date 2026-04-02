@@ -77,7 +77,6 @@ defmodule Redis.ClusterFailoverTest do
       assert {:ok, "after"} = Cluster.command(cluster, ["GET", "{failover}.key"])
     end
 
-    @tag :skip
     test "client recovers after master kill + forced failover", %{
       cluster: cluster,
       cluster_srv: cluster_srv
@@ -100,7 +99,7 @@ defmodule Redis.ClusterFailoverTest do
       replica = find_replica_of_dead(cluster_srv, killed, killed_info.port)
       replica_info = Server.info(replica)
       IO.puts("Promoting replica on port #{replica_info.port}")
-      {:ok, "OK"} = Chaos.trigger_failover(replica, force: true)
+      {:ok, "OK"} = Chaos.trigger_failover(replica)
       Process.sleep(5000)
 
       # Refresh and verify
