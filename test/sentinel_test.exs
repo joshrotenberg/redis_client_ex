@@ -4,6 +4,7 @@ defmodule Redis.SentinelTest do
   alias Redis.Sentinel
 
   @moduletag timeout: 60_000
+  @moduletag :sentinel
 
   setup_all do
     {:ok, sentinel_srv} =
