@@ -2,10 +2,24 @@ defmodule Redis do
   @moduledoc """
   Modern, full-featured Redis client for Elixir.
 
+  This module provides the top-level API for single-connection usage.
+  For other deployment modes and features, see:
+
+    * `Redis.Connection` - single connection with full options
+    * `Redis.Connection.Pool` - connection pooling
+    * `Redis.Cluster` - cluster-aware client with slot routing
+    * `Redis.Sentinel` - sentinel-aware client with failover
+    * `Redis.PubSub` - pub/sub subscriptions
+    * `Redis.PhoenixPubSub` - Phoenix.PubSub adapter
+    * `Redis.Cache` - client-side caching with ETS
+    * `Redis.Consumer` - streams consumer group GenServer
+    * `Redis.Resilience` - composed retry, circuit breaker, bulkhead
+    * `Redis.Script` - Lua script execution with SHA caching
+    * `Redis.Commands` - 21 command builder modules
+
   ## Quick Start
 
       {:ok, conn} = Redis.start_link()
-      {:ok, conn} = Redis.start_link("redis://:secret@localhost:6380/2")
       {:ok, "OK"} = Redis.command(conn, ["SET", "key", "value"])
       {:ok, "value"} = Redis.command(conn, ["GET", "key"])
 
@@ -17,22 +31,21 @@ defmodule Redis do
         ["MGET", "a", "b"]
       ])
 
-  ## Fire-and-Forget
+  ## Transactions
 
-      :ok = Redis.noreply_command(conn, ["INCR", "counter"])
-      :ok = Redis.noreply_pipeline(conn, [["SET", "a", "1"], ["SET", "b", "2"]])
+      {:ok, [1, 2, 3]} = Redis.transaction(conn, [
+        ["INCR", "counter"],
+        ["INCR", "counter"],
+        ["INCR", "counter"]
+      ])
 
-  ## Cluster
+  ## Optimistic Locking
 
-      {:ok, cluster} = Redis.Cluster.start_link(nodes: [{"127.0.0.1", 7000}])
-      {:ok, "value"} = Redis.Cluster.command(cluster, ["GET", "key"])
-
-  ## Sentinel
-
-      {:ok, conn} = Redis.Sentinel.start_link(
-        sentinels: ["sentinel1:26379"],
-        group: "mymaster"
-      )
+      Redis.watch_transaction(conn, ["balance"], fn conn ->
+        {:ok, bal} = Redis.command(conn, ["GET", "balance"])
+        new_bal = String.to_integer(bal) + 100
+        [["SET", "balance", to_string(new_bal)]]
+      end)
   """
 
   alias Redis.Connection
