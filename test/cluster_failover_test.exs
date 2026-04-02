@@ -2,6 +2,7 @@ defmodule Redis.ClusterFailoverTest do
   use ExUnit.Case, async: false
 
   alias Redis.Cluster
+  alias Redis.Cluster.Router
   alias RedisServerWrapper.{Chaos, Server}
 
   @moduletag timeout: 120_000
@@ -118,7 +119,7 @@ defmodule Redis.ClusterFailoverTest do
       assert {:ok, "OK"} = Cluster.command(cluster, ["SET", "{freeze}.key", "value"])
 
       # Find the master owning this key's slot and freeze a DIFFERENT node
-      slot = Redis.Cluster.Router.slot("{freeze}")
+      slot = Router.slot("{freeze}")
       all_nodes = RedisServerWrapper.Cluster.nodes(cluster_srv)
       {master_port, _} = find_master_for_slot(all_nodes, slot)
 
@@ -161,61 +162,71 @@ defmodule Redis.ClusterFailoverTest do
 
   # Find the replica of the master owning a key (master is alive)
   defp find_replica_of_key(cluster_srv, key) do
-    slot = Redis.Cluster.Router.slot(key)
+    slot = Router.slot(key)
     nodes = RedisServerWrapper.Cluster.nodes(cluster_srv)
-
-    # Find which node is master for this slot
     {master_port, master_id} = find_master_for_slot(nodes, slot)
 
-    # Find the replica of that master
     Enum.find(nodes, fn n ->
-      info = Server.info(n)
-
-      if info.port != master_port do
-        case Server.run(n, ["CLUSTER", "NODES"]) do
-          {:ok, output} ->
-            myself =
-              output
-              |> String.split("\n", trim: true)
-              |> Enum.find(&String.contains?(&1, "myself"))
-
-            if myself do
-              parts = String.split(myself)
-              String.contains?(Enum.at(parts, 2), "slave") and Enum.at(parts, 3) == master_id
-            end
-
-          _ ->
-            false
-        end
-      end
+      Server.info(n).port != master_port and node_is_slave_of?(n, master_id)
     end) || raise "No replica found for slot #{slot}"
+  end
+
+  defp node_is_slave_of?(node, master_id) do
+    case get_myself_line(node) do
+      nil -> false
+      line -> String.contains?(Enum.at(line, 2), "slave") and Enum.at(line, 3) == master_id
+    end
+  end
+
+  defp get_myself_line(node) do
+    case Server.run(node, ["CLUSTER", "NODES"]) do
+      {:ok, output} ->
+        output
+        |> String.split("\n", trim: true)
+        |> Enum.find(&String.contains?(&1, "myself"))
+        |> case do
+          nil -> nil
+          line -> String.split(line)
+        end
+
+      _ ->
+        nil
+    end
   end
 
   defp find_master_for_slot(nodes, target_slot) do
     Enum.find_value(nodes, fn n ->
       case Server.run(n, ["CLUSTER", "NODES"]) do
-        {:ok, output} ->
-          output
-          |> String.split("\n", trim: true)
-          |> Enum.find_value(fn line ->
-            parts = String.split(line)
-
-            if length(parts) >= 9 and String.contains?(Enum.at(parts, 2), "master") do
-              addr = Enum.at(parts, 1)
-              [host_port | _] = String.split(addr, "@")
-              [_host, port_str] = String.split(host_port, ":")
-              port = String.to_integer(port_str)
-              id = hd(parts)
-              slots = Enum.drop(parts, 8)
-
-              if slot_in_ranges?(target_slot, slots), do: {port, id}
-            end
-          end)
-
-        _ ->
-          nil
+        {:ok, output} -> parse_master_for_slot(output, target_slot)
+        _ -> nil
       end
     end)
+  end
+
+  defp parse_master_for_slot(output, target_slot) do
+    output
+    |> String.split("\n", trim: true)
+    |> Enum.find_value(&extract_master_if_owns_slot(&1, target_slot))
+  end
+
+  defp extract_master_if_owns_slot(line, target_slot) do
+    parts = String.split(line)
+
+    with true <- length(parts) >= 9,
+         true <- String.contains?(Enum.at(parts, 2), "master"),
+         {port, id} <- parse_node_addr(parts),
+         true <- slot_in_ranges?(target_slot, Enum.drop(parts, 8)) do
+      {port, id}
+    else
+      _ -> nil
+    end
+  end
+
+  defp parse_node_addr(parts) do
+    id = hd(parts)
+    [host_port | _] = String.split(Enum.at(parts, 1), "@")
+    [_host, port_str] = String.split(host_port, ":")
+    {String.to_integer(port_str), id}
   end
 
   # Find the replica of a dead master (master already killed)
