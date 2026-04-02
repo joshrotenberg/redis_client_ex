@@ -231,7 +231,7 @@ defmodule Redis.Commands.SearchIntegrationTest do
 
       assert {:ok, suggestions} = Connection.command(conn, Search.sugget("ac:test", "hel"))
       assert is_list(suggestions)
-      assert length(suggestions) >= 1
+      assert [_ | _] = suggestions
     end
 
     test "SUGLEN", %{conn: conn} do
