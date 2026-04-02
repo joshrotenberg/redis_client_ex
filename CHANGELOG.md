@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/joshrotenberg/redis_client_ex/compare/v0.3.0...v0.4.0) (2026-04-02)
+
+
+### Features
+
+* add Plug session store backed by Redis (closes [#34](https://github.com/joshrotenberg/redis_client_ex/issues/34)) ([#62](https://github.com/joshrotenberg/redis_client_ex/issues/62)) ([eaeeea8](https://github.com/joshrotenberg/redis_client_ex/commit/eaeeea8e6954106b3cc2705d133d044a71d4c308))
+
 ## [0.3.0](https://github.com/joshrotenberg/redis_client_ex/compare/v0.2.0...v0.3.0) (2026-04-02)
 
 
