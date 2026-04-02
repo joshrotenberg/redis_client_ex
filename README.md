@@ -14,7 +14,7 @@ RESP3 native. Cluster-aware. Client-side caching. Resilience built in. Zero requ
 ```elixir
 def deps do
   [
-    {:redis_client_ex, "~> 0.1"}
+    {:redis_client_ex, "~> 0.3"}
   ]
 end
 ```
@@ -80,6 +80,19 @@ Redis.Connection.Pool.command(pool, ["GET", "key"])
 ])
 ```
 
+## Optimistic Locking (WATCH)
+
+```elixir
+Redis.watch_transaction(conn, ["balance"], fn conn ->
+  {:ok, bal} = Redis.command(conn, ["GET", "balance"])
+  new_bal = String.to_integer(bal) + 100
+  [["SET", "balance", to_string(new_bal)]]
+end)
+```
+
+Watches keys, calls your function to read and compute commands, then
+executes in MULTI/EXEC. Automatically retries on conflict (default 3 attempts).
+
 ## Command Builders
 
 Pure functions that return command lists. Use them with any connection type.
@@ -124,6 +137,13 @@ Redis.Cluster.pipeline(cluster, [
   ["GET", "key1"],
 ])
 #=> {:ok, ["OK", "OK", "a"]}
+
+# Transactions require same-slot keys (use hash tags)
+Redis.Cluster.transaction(cluster, [
+  ["SET", "{user:1}.name", "Alice"],
+  ["SET", "{user:1}.email", "alice@example.com"]
+])
+#=> {:ok, ["OK", "OK"]}
 ```
 
 ## Sentinel
@@ -151,6 +171,22 @@ receive do
     IO.puts("Got: #{payload}")
 end
 ```
+
+## Phoenix.PubSub Adapter
+
+Drop-in Redis adapter for Phoenix.PubSub. Enables cross-node broadcasting
+for Phoenix, LiveView, and any PubSub-based feature.
+
+```elixir
+children = [
+  {Phoenix.PubSub,
+   name: MyApp.PubSub,
+   adapter: Redis.PhoenixPubSub,
+   redis_opts: [host: "localhost", port: 6379]}
+]
+```
+
+Requires `phoenix_pubsub` (optional dependency).
 
 ## Streams Consumer
 
@@ -227,9 +263,12 @@ Redis.Resilience.command(conn, ["GET", "key"])
 ## Features
 
 - **RESP3 native** with RESP2 fallback for older servers
-- **Cluster** with topology discovery, hash slot routing, MOVED/ASK redirects, cross-slot pipeline splitting
+- **Cluster** with topology discovery, hash slot routing, MOVED/ASK redirects, cross-slot pipeline splitting, transaction validation
 - **Sentinel** with master resolution, role verification, proactive failover via `+switch-master`
 - **Pub/Sub** with pattern subscriptions, sharded pub/sub (Redis 7+)
+- **Phoenix.PubSub adapter** for cross-node broadcasting (optional dep)
+- **Streams Consumer** with consumer groups, auto-ack, and pending message recovery
+- **WATCH transactions** with automatic retry on conflict
 - **Client-side caching** via RESP3 server-assisted invalidation + ETS
 - **Connection pool** with round-robin/random dispatch
 - **Resilience** patterns: circuit breaker, retry with backoff, request coalescing, bulkhead
