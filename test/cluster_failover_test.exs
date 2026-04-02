@@ -232,7 +232,9 @@ defmodule Redis.ClusterFailoverTest do
   # Find the replica of a dead master (master already killed)
   defp find_replica_of_dead(cluster_srv, killed, dead_port) do
     surviving = RedisServerWrapper.Cluster.nodes(cluster_srv) |> Enum.reject(&(&1 == killed))
-    {:ok, cn} = Server.run(hd(surviving), ["CLUSTER", "NODES"])
+
+    # Query CLUSTER NODES from any reachable surviving node
+    cn = get_cluster_nodes_from_any(surviving)
 
     dead_id =
       cn
@@ -241,7 +243,6 @@ defmodule Redis.ClusterFailoverTest do
         if String.contains?(line, ":#{dead_port}@"), do: line |> String.split() |> hd()
       end)
 
-    # Find slave line referencing dead master ID
     replica_port =
       cn
       |> String.split("\n", trim: true)
@@ -250,10 +251,7 @@ defmodule Redis.ClusterFailoverTest do
 
         if length(parts) >= 4 and String.contains?(Enum.at(parts, 2), "slave") and
              Enum.at(parts, 3) == dead_id do
-          addr = Enum.at(parts, 1)
-          [host_port | _] = String.split(addr, "@")
-          [_host, port_str] = String.split(host_port, ":")
-          String.to_integer(port_str)
+          Enum.at(parts, 1) |> parse_port_from_addr()
         end
       end)
 
@@ -264,6 +262,25 @@ defmodule Redis.ClusterFailoverTest do
         :exit, _ -> false
       end
     end) || raise "Could not find replica of dead master on port #{dead_port}"
+  end
+
+  defp get_cluster_nodes_from_any(nodes) do
+    Enum.find_value(nodes, fn n ->
+      try do
+        case Server.run(n, ["CLUSTER", "NODES"]) do
+          {:ok, output} -> output
+          _ -> nil
+        end
+      catch
+        :exit, _ -> nil
+      end
+    end) || raise "No reachable nodes"
+  end
+
+  defp parse_port_from_addr(addr) do
+    [host_port | _] = String.split(addr, "@")
+    [_host, port_str] = String.split(host_port, ":")
+    String.to_integer(port_str)
   end
 
   defp slot_in_ranges?(slot, ranges) do
