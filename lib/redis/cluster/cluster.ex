@@ -73,6 +73,48 @@ defmodule Redis.Cluster do
     GenServer.call(cluster, {:pipeline, commands}, timeout)
   end
 
+  @doc """
+  Executes a MULTI/EXEC transaction in cluster mode.
+
+  All commands must target the same hash slot. Returns `{:error, :cross_slot}`
+  if commands span multiple slots. Use hash tags (e.g. `{user}.name`) to
+  ensure related keys land in the same slot.
+
+      Cluster.transaction(cluster, [
+        ["SET", "{user:1}.name", "Alice"],
+        ["SET", "{user:1}.email", "alice@example.com"]
+      ])
+  """
+  @spec transaction(GenServer.server(), [[String.t()]], keyword()) ::
+          {:ok, [term()]} | {:error, term()}
+  def transaction(cluster, commands, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 10_000)
+    GenServer.call(cluster, {:transaction, commands}, timeout)
+  end
+
+  @doc """
+  Executes a WATCH-based optimistic locking transaction in cluster mode.
+
+  All watched keys and all commands produced by the function must target
+  the same hash slot. Returns `{:error, :cross_slot}` if they don't.
+
+      Cluster.watch_transaction(cluster, ["{acct:1}.balance"], fn conn ->
+        {:ok, bal} = Redis.Connection.command(conn, ["GET", "{acct:1}.balance"])
+        new_bal = String.to_integer(bal) + 100
+        [["SET", "{acct:1}.balance", to_string(new_bal)]]
+      end)
+  """
+  @spec watch_transaction(
+          GenServer.server(),
+          [String.t()],
+          (GenServer.server() -> [[String.t()]] | {:abort, term()}),
+          keyword()
+        ) :: {:ok, [term()]} | {:error, term()}
+  def watch_transaction(cluster, keys, fun, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 10_000)
+    GenServer.call(cluster, {:watch_transaction, keys, fun, opts}, timeout)
+  end
+
   @doc "Returns cluster info: nodes, slot coverage."
   @spec info(GenServer.server()) :: map()
   def info(cluster), do: GenServer.call(cluster, :info)
@@ -149,6 +191,49 @@ defmodule Redis.Cluster do
 
       {:error, :empty} ->
         {:reply, {:ok, []}, state}
+    end
+  end
+
+  def handle_call({:transaction, commands}, _from, state) do
+    case Router.validate_pipeline(commands) do
+      {:ok, slot} ->
+        case get_connection_for_slot(state, slot) do
+          {:ok, conn} ->
+            {:reply, Connection.transaction(conn, commands), state}
+
+          error ->
+            {:reply, error, state}
+        end
+
+      {:error, :cross_slot} ->
+        {:reply, {:error, :cross_slot}, state}
+
+      {:error, :empty} ->
+        {:reply, {:error, :empty_transaction}, state}
+    end
+  end
+
+  def handle_call({:watch_transaction, keys, fun, opts}, _from, state) do
+    key_slots = keys |> Enum.map(&Router.slot/1) |> Enum.uniq()
+
+    case key_slots do
+      [slot] ->
+        case get_connection_for_slot(state, slot) do
+          {:ok, conn} ->
+            result =
+              Connection.watch_transaction(conn, keys, fun, opts)
+
+            {:reply, result, state}
+
+          error ->
+            {:reply, error, state}
+        end
+
+      [] ->
+        {:reply, {:error, :no_keys}, state}
+
+      _ ->
+        {:reply, {:error, :cross_slot}, state}
     end
   end
 

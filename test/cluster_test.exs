@@ -33,6 +33,35 @@ defmodule Redis.ClusterTest do
       assert Router.key_from_command(["GET", "mykey"]) == "mykey"
       assert Router.key_from_command(["PING"]) == nil
     end
+
+    test "validate_pipeline rejects cross-slot transaction commands" do
+      commands = [
+        ["SET", "key1", "val1"],
+        ["SET", "key2", "val2"]
+      ]
+
+      assert {:error, :cross_slot} = Router.validate_pipeline(commands)
+    end
+
+    test "validate_pipeline accepts same-slot transaction commands with hash tags" do
+      commands = [
+        ["SET", "{txn}.name", "Alice"],
+        ["SET", "{txn}.email", "alice@example.com"],
+        ["INCR", "{txn}.count"]
+      ]
+
+      assert {:ok, _slot} = Router.validate_pipeline(commands)
+    end
+
+    test "watched keys must share a slot" do
+      keys = ["{acct:1}.balance", "{acct:1}.pending"]
+      slots = keys |> Enum.map(&Router.slot/1) |> Enum.uniq()
+      assert length(slots) == 1
+
+      cross_keys = ["acct:1:balance", "acct:2:balance"]
+      cross_slots = cross_keys |> Enum.map(&Router.slot/1) |> Enum.uniq()
+      assert length(cross_slots) > 1
+    end
   end
 
   # --- Integration tests require a real cluster ---
@@ -172,6 +201,53 @@ defmodule Redis.ClusterTest do
 
     test "refresh updates topology", %{cluster: cluster} do
       assert :ok = Cluster.refresh(cluster)
+    end
+  end
+
+  describe "Cluster transactions" do
+    test "transaction succeeds with same-slot keys", %{cluster: cluster} do
+      result =
+        Cluster.transaction(cluster, [
+          ["SET", "{ct}.name", "Alice"],
+          ["SET", "{ct}.age", "30"]
+        ])
+
+      assert {:ok, ["OK", "OK"]} = result
+      assert {:ok, "Alice"} = Cluster.command(cluster, ["GET", "{ct}.name"])
+      assert {:ok, "30"} = Cluster.command(cluster, ["GET", "{ct}.age"])
+    end
+
+    test "transaction rejects cross-slot keys", %{cluster: cluster} do
+      result =
+        Cluster.transaction(cluster, [
+          ["SET", "cross:a", "1"],
+          ["SET", "cross:b", "2"]
+        ])
+
+      assert {:error, :cross_slot} = result
+    end
+
+    test "watch_transaction succeeds with same-slot keys", %{cluster: cluster} do
+      Cluster.command(cluster, ["SET", "{wt}.balance", "100"])
+
+      result =
+        Cluster.watch_transaction(cluster, ["{wt}.balance"], fn conn ->
+          {:ok, bal} = Redis.Connection.command(conn, ["GET", "{wt}.balance"])
+          new_bal = String.to_integer(bal) + 50
+          [["SET", "{wt}.balance", to_string(new_bal)]]
+        end)
+
+      assert {:ok, ["OK"]} = result
+      assert {:ok, "150"} = Cluster.command(cluster, ["GET", "{wt}.balance"])
+    end
+
+    test "watch_transaction rejects cross-slot keys", %{cluster: cluster} do
+      result =
+        Cluster.watch_transaction(cluster, ["key:a", "key:b"], fn _conn ->
+          [["SET", "key:a", "1"]]
+        end)
+
+      assert {:error, :cross_slot} = result
     end
   end
 end
