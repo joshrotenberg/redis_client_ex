@@ -228,6 +228,21 @@ Redis.command(conn, ["XADD", "orders", "*", "item", "widget", "qty", "5"])
 Scale by adding more consumers with different `:consumer` names --
 Redis distributes messages across the group automatically.
 
+## Session Store
+
+Drop-in Plug session store backed by Redis with configurable TTL.
+
+```elixir
+plug Plug.Session,
+  store: Redis.PlugSession,
+  key: "_my_app_session",
+  table: :redis,
+  signing_salt: "your_salt",
+  ttl: 86_400
+```
+
+Requires `plug` (optional dependency).
+
 ## Client-Side Caching
 
 ```elixir
@@ -269,6 +284,7 @@ Redis.Resilience.command(conn, ["GET", "key"])
 - **Phoenix.PubSub adapter** for cross-node broadcasting (optional dep)
 - **Streams Consumer** with consumer groups, auto-ack, and pending message recovery
 - **WATCH transactions** with automatic retry on conflict
+- **Plug session store** with configurable TTL
 - **Client-side caching** via RESP3 server-assisted invalidation + ETS
 - **Connection pool** with round-robin/random dispatch
 - **Resilience** patterns: circuit breaker, retry with backoff, request coalescing, bulkhead
