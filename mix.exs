@@ -31,6 +31,7 @@ defmodule Redis.MixProject do
     [
       {:telemetry, "~> 1.0", optional: true},
       {:jason, "~> 1.4", optional: true},
+      {:phoenix_pubsub, "~> 2.1", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
