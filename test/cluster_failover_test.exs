@@ -2,32 +2,24 @@ defmodule Redis.ClusterFailoverTest do
   use ExUnit.Case, async: false
 
   alias Redis.Cluster
-  alias Redis.Cluster.Router
-  alias Redis.Connection
+  alias RedisServerWrapper.{Chaos, Server}
 
   @moduletag timeout: 120_000
   @moduletag :cluster_failover
 
-  # 3 masters + 1 replica each = 6 nodes
   @base_port 7400
-  @masters 3
-  @replicas 1
 
   setup_all do
     {:ok, cluster_srv} =
       RedisServerWrapper.Cluster.start_link(
-        masters: @masters,
-        replicas_per_master: @replicas,
+        masters: 3,
+        replicas_per_master: 1,
         base_port: @base_port
       )
 
     assert RedisServerWrapper.Cluster.healthy?(cluster_srv)
 
-    nodes =
-      for i <- 0..(@masters - 1) do
-        {"127.0.0.1", @base_port + i}
-      end
-
+    nodes = for i <- 0..2, do: {"127.0.0.1", @base_port + i}
     {:ok, cluster} = Cluster.start_link(nodes: nodes)
 
     on_exit(fn ->
@@ -50,71 +42,66 @@ defmodule Redis.ClusterFailoverTest do
   end
 
   describe "failover recovery" do
-    test "client recovers after a master node is killed", %{
+    test "client recovers after master kill + forced failover", %{
       cluster: cluster,
       cluster_srv: cluster_srv
     } do
-      # Write some data
+      # Write data
       assert {:ok, "OK"} = Cluster.command(cluster, ["SET", "{failover}.key", "before"])
       assert {:ok, "before"} = Cluster.command(cluster, ["GET", "{failover}.key"])
 
-      # Find which node owns the slot for {failover}
-      slot = Router.slot("{failover}")
-      IO.puts("Slot for {failover}: #{slot}")
+      # Kill the master owning this key's slot
+      {:ok, killed} = Chaos.kill_master(cluster_srv, "{failover}.key")
+      killed_info = Server.info(killed)
 
-      # Get all node pids from the wrapper
-      node_pids = RedisServerWrapper.Cluster.nodes(cluster_srv)
-      IO.puts("Cluster has #{length(node_pids)} nodes")
+      # Wait for the cluster to detect the failure
+      Process.sleep(8000)
 
-      # Find the master for this slot by checking each node
-      master_port = find_master_port_for_slot(cluster_srv, slot)
-      IO.puts("Master for slot #{slot} is on port #{master_port}")
+      # Find and promote the replica of the dead master
+      promote_replica(cluster_srv, killed, killed_info.port)
+      Process.sleep(5000)
 
-      # Find the node pid for that port and kill it
-      master_pid = find_node_pid_for_port(node_pids, master_port)
-      IO.puts("Killing master on port #{master_port}")
-      RedisServerWrapper.Server.stop(master_pid)
-
-      # Wait for cluster to detect the failure and promote a replica.
-      # cluster-node-timeout defaults to 5000ms in the wrapper, so the
-      # replica should be promoted within ~15s.
-      IO.puts("Waiting for failover...")
-      wait_for_cluster_healthy(cluster_srv, master_port, 30_000)
-
-      # Force topology refresh on the client so it discovers the new master
-      IO.puts("Refreshing client topology...")
-      refresh_result = Cluster.refresh(cluster)
-      IO.puts("Refresh result: #{inspect(refresh_result)}")
-
-      info = Cluster.info(cluster)
-      IO.puts("Cluster nodes after refresh: #{inspect(info.nodes)}")
+      # Refresh client topology to discover the promoted replica
+      :ok = Cluster.refresh(cluster)
       Process.sleep(2000)
 
-      # The client should now be able to read the data via the promoted replica
-      result = Cluster.command(cluster, ["GET", "{failover}.key"])
-      IO.puts("After failover GET result: #{inspect(result)}")
-      assert {:ok, "before"} = result
+      # Reads should work via the promoted replica
+      assert {:ok, "before"} = Cluster.command(cluster, ["GET", "{failover}.key"])
 
-      # Writing should also work
+      # Writes should also work
       assert {:ok, "OK"} = Cluster.command(cluster, ["SET", "{failover}.key", "after"])
       assert {:ok, "after"} = Cluster.command(cluster, ["GET", "{failover}.key"])
     end
 
-    test "client handles MOVED redirect transparently", %{cluster: cluster} do
-      # First ensure the cluster is healthy (may be recovering from previous test)
-      Process.sleep(2000)
-      Cluster.refresh(cluster)
+    test "client survives node freeze and resume", %{
+      cluster: cluster,
+      cluster_srv: cluster_srv
+    } do
+      assert {:ok, "OK"} = Cluster.command(cluster, ["SET", "{freeze}.key", "value"])
 
-      # Write data
+      # Freeze a random node briefly
+      nodes = RedisServerWrapper.Cluster.nodes(cluster_srv)
+      target = List.last(nodes)
+      {:ok, os_pid} = Chaos.freeze_node(target)
+
+      # Commands to other slots should still work
+      assert {:ok, "value"} = Cluster.command(cluster, ["GET", "{freeze}.key"])
+
+      # Resume
+      Chaos.resume_node(os_pid)
+      Process.sleep(1000)
+
+      assert {:ok, "value"} = Cluster.command(cluster, ["GET", "{freeze}.key"])
+    end
+
+    test "client handles MOVED redirect transparently", %{cluster: cluster} do
       for i <- 1..20 do
         key = "{moved_test}:#{i}"
         assert {:ok, "OK"} = Cluster.command(cluster, ["SET", key, "val#{i}"])
       end
 
-      # Force a topology refresh (may cause stale routing temporarily)
       Cluster.refresh(cluster)
 
-      # Reads should still work even with possibly stale routing
       for i <- 1..20 do
         key = "{moved_test}:#{i}"
         expected = "val#{i}"
@@ -127,140 +114,44 @@ defmodule Redis.ClusterFailoverTest do
   # Helpers
   # -------------------------------------------------------------------
 
-  defp wait_for_cluster_healthy(cluster_srv, dead_port, timeout) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-    do_wait_healthy(cluster_srv, dead_port, deadline)
-  end
+  defp promote_replica(cluster_srv, killed, dead_port) do
+    surviving = RedisServerWrapper.Cluster.nodes(cluster_srv) |> Enum.reject(&(&1 == killed))
 
-  defp do_wait_healthy(cluster_srv, dead_port, deadline) do
-    Process.sleep(2000)
+    # Get the dead master's node ID from CLUSTER NODES
+    {:ok, cn} = Server.run(hd(surviving), ["CLUSTER", "NODES"])
 
-    if System.monotonic_time(:millisecond) >= deadline do
-      IO.puts("Cluster failover timed out")
-      :timeout
-    else
-      if failover_complete?(cluster_srv, dead_port) do
-        IO.puts("Cluster failover check complete")
-        :ok
-      else
-        do_wait_healthy(cluster_srv, dead_port, deadline)
-      end
-    end
-  end
-
-  defp failover_complete?(cluster_srv, dead_port) do
-    cluster_srv
-    |> RedisServerWrapper.Cluster.nodes()
-    |> Enum.any?(fn pid -> surviving_node_sees_failover?(pid, dead_port) end)
-  end
-
-  defp surviving_node_sees_failover?(pid, dead_port) do
-    info = RedisServerWrapper.Server.info(pid)
-    if info.port == dead_port, do: false, else: check_node_cluster_state(pid, dead_port)
-  catch
-    :exit, _ -> false
-  end
-
-  defp check_node_cluster_state(pid, dead_port) do
-    with {:ok, nodes_output} <- RedisServerWrapper.Server.run(pid, ["CLUSTER", "NODES"]),
-         {:ok, info_output} <- RedisServerWrapper.Server.run(pid, ["CLUSTER", "INFO"]) do
-      dead_marked_fail =
-        nodes_output
-        |> String.split("\n", trim: true)
-        |> Enum.all?(fn line ->
-          if String.contains?(line, ":#{dead_port}@") and String.contains?(line, "master") do
-            String.contains?(line, "fail")
-          else
-            true
-          end
-        end)
-
-      dead_marked_fail and String.contains?(info_output, "cluster_state:ok")
-    else
-      _ -> false
-    end
-  end
-
-  defp find_master_port_for_slot(cluster_srv, target_slot) do
-    # Use redis-cli CLUSTER SLOTS to find which node owns the slot
-    case RedisServerWrapper.Cluster.run(cluster_srv, ["CLUSTER", "SLOTS"]) do
-      {:ok, output} ->
-        parse_cluster_slots_for_port(output, target_slot)
-
-      _ ->
-        # Fallback: try each node directly
-        node_pids = RedisServerWrapper.Cluster.nodes(cluster_srv)
-
-        Enum.find_value(node_pids, fn pid ->
-          info = RedisServerWrapper.Server.info(pid)
-          port = info.port
-
-          case RedisServerWrapper.Server.run(pid, ["CLUSTER", "SLOTS"]) do
-            {:ok, _} -> port
-            _ -> nil
-          end
-        end) || @base_port
-    end
-  end
-
-  defp parse_cluster_slots_for_port(_output, target_slot) do
-    # CLUSTER SLOTS output is complex — simplify by connecting directly
-    # and using CLUSTER MYID + CLUSTER NODES
-    # For now, use a simpler approach: connect to each node and check
-    {:ok, conn} = Connection.start_link(port: @base_port)
-
-    case Connection.command(conn, ["CLUSTER", "NODES"]) do
-      {:ok, nodes_str} when is_binary(nodes_str) ->
-        port = parse_nodes_for_slot(nodes_str, target_slot)
-        Connection.stop(conn)
-        port
-
-      _ ->
-        Connection.stop(conn)
-        @base_port
-    end
-  end
-
-  defp parse_nodes_for_slot(nodes_str, target_slot) do
-    nodes_str
-    |> String.split("\n", trim: true)
-    |> Enum.find_value(fn line ->
-      parts = String.split(line)
-      # Format: <id> <ip:port@cport> <flags> <master> <ping> <pong> <epoch> <link> <slots...>
-      if length(parts) >= 9 and "master" in String.split(Enum.at(parts, 2), ",") do
-        addr = Enum.at(parts, 1)
-        [host_port | _] = String.split(addr, "@")
-        [_host, port_str] = String.split(host_port, ":")
-        port = String.to_integer(port_str)
-
-        slots = Enum.drop(parts, 8)
-
-        if slot_in_ranges?(target_slot, slots) do
-          port
+    dead_master_id =
+      cn
+      |> String.split("\n", trim: true)
+      |> Enum.find_value(fn line ->
+        if String.contains?(line, ":#{dead_port}@") do
+          line |> String.split() |> hd()
         end
-      end
-    end) || @base_port
-  end
+      end)
 
-  defp slot_in_ranges?(slot, ranges) do
-    Enum.any?(ranges, fn range ->
-      case String.split(range, "-") do
-        [start_str, end_str] ->
-          slot >= String.to_integer(start_str) and slot <= String.to_integer(end_str)
+    # Find the replica referencing this master ID
+    replica =
+      Enum.find(surviving, fn n ->
+        case Server.run(n, ["CLUSTER", "NODES"]) do
+          {:ok, output} ->
+            lines = String.split(output, "\n", trim: true)
+            myself = Enum.find(lines, &String.contains?(&1, "myself"))
 
-        [single] ->
-          String.to_integer(single) == slot
+            if myself do
+              parts = String.split(myself)
+              String.contains?(Enum.at(parts, 2), "slave") and Enum.at(parts, 3) == dead_master_id
+            end
 
-        _ ->
-          false
-      end
-    end)
-  end
+          _ ->
+            false
+        end
+      end)
 
-  defp find_node_pid_for_port(node_pids, target_port) do
-    Enum.find(node_pids, fn pid ->
-      info = RedisServerWrapper.Server.info(pid)
-      info.port == target_port
-    end)
+    if replica do
+      {:ok, "OK"} = Server.run(replica, ["CLUSTER", "FAILOVER", "FORCE"])
+      :ok
+    else
+      raise "Could not find replica of dead master #{dead_port}"
+    end
   end
 end
