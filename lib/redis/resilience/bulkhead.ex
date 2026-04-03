@@ -79,7 +79,7 @@ defmodule Redis.Resilience.Bulkhead do
     queue =
       state.queue
       |> :queue.to_list()
-      |> Enum.reject(fn {f, _} -> f == from end)
+      |> Enum.reject(fn {f, _, _} -> f == from end)
       |> :queue.from_list()
 
     GenServer.reply(from, {:error, :bulkhead_full})
