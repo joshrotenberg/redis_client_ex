@@ -168,6 +168,8 @@ defmodule Redis.JSON do
   def exists?(conn, key) do
     case Connection.command(conn, Cmd.type(key)) do
       {:ok, nil} -> false
+      {:ok, [nil]} -> false
+      {:ok, [[nil]]} -> false
       {:ok, _} -> true
       {:error, _} -> false
     end
@@ -297,6 +299,19 @@ defmodule Redis.JSON do
   # Root get with no field selection: unwrap the JSONPath array wrapper
   defp unwrap_result([map], nil, atom_keys) when is_map(map) do
     maybe_atomize(map, atom_keys)
+  end
+
+  # Single-field get: response is a JSON array like ["Alice"]
+  defp unwrap_result(list, [field], atom_keys) when is_list(list) do
+    key = to_string(field)
+
+    val =
+      case list do
+        [v] -> v
+        v -> v
+      end
+
+    maybe_atomize(%{key => val}, atom_keys)
   end
 
   # Multi-field get: response is %{"$.name" => [...], "$.age" => [...]}
