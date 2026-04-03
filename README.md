@@ -228,6 +228,59 @@ Redis.command(conn, ["XADD", "orders", "*", "item", "widget", "qty", "5"])
 Scale by adding more consumers with different `:consumer` names --
 Redis distributes messages across the group automatically.
 
+## Search
+
+High-level search API over RediSearch. Define indexes with keywords, push
+documents as maps, search with Elixir filter expressions instead of raw
+query strings.
+
+```elixir
+# Create an index
+Redis.Search.create_index(conn, "movies",
+  prefix: "movie:",
+  fields: [
+    title: :text,
+    year: {:numeric, sortable: true},
+    genres: :tag
+  ]
+)
+
+# Add documents as maps
+Redis.Search.add(conn, "movies", "movie:1", %{
+  title: "The Dark Knight",
+  year: 2008,
+  genres: "action,thriller"
+})
+
+# Search with Elixir filters
+{:ok, results} = Redis.Search.find(conn, "movies", "dark knight",
+  where: [year: {:gt, 2000}, genres: {:tag, "action"}],
+  sort: {:year, :desc},
+  limit: 10
+)
+#=> %Redis.Search.Result{total: 1, results: [%{id: "movie:1", "title" => "The Dark Knight", ...}]}
+
+# Aggregation
+{:ok, results} = Redis.Search.aggregate(conn, "movies",
+  group_by: :genres,
+  reduce: [count: "total"],
+  sort: {:total, :desc}
+)
+```
+
+Filters compile to RediSearch query syntax automatically:
+
+| Elixir | RediSearch |
+|---|---|
+| `name: "Alice"` | `@name:Alice` |
+| `age: {:gt, 18}` | `@age:[(18 +inf]` |
+| `age: {:between, 18, 65}` | `@age:[18 65]` |
+| `city: {:tag, "NYC"}` | `@city:{NYC}` |
+| `city: {:any, ["NYC", "LA"]}` | `@city:{NYC\|LA}` |
+
+Numeric strings are auto-coerced to integers/floats by default.
+For raw RediSearch access, see `Redis.Commands.Search`.
+
 ## Session Store
 
 Drop-in Plug session store backed by Redis with configurable TTL.
@@ -284,6 +337,7 @@ Redis.Resilience.command(conn, ["GET", "key"])
 - **Phoenix.PubSub adapter** for cross-node broadcasting (optional dep)
 - **Streams Consumer** with consumer groups, auto-ack, and pending message recovery
 - **WATCH transactions** with automatic retry on conflict
+- **Search** with Elixir filter expressions, auto-coercion, parsed results (Redis Stack)
 - **Plug session store** with configurable TTL
 - **Client-side caching** via RESP3 server-assisted invalidation + ETS
 - **Connection pool** with round-robin/random dispatch

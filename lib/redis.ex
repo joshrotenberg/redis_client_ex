@@ -13,6 +13,7 @@ defmodule Redis do
     * `Redis.PhoenixPubSub` - Phoenix.PubSub adapter
     * `Redis.Cache` - client-side caching with ETS
     * `Redis.Consumer` - streams consumer group GenServer
+    * `Redis.Search` - high-level search API (Meilisearch-inspired)
     * `Redis.PlugSession` - Plug session store
     * `Redis.Resilience` - composed retry, circuit breaker, bulkhead
     * `Redis.Script` - Lua script execution with SHA caching
