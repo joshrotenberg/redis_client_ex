@@ -139,8 +139,14 @@ defmodule Redis.Protocol.RESP3 do
 
   defp decode_number(data) do
     case :binary.split(data, @crlf) do
-      [num_str, rest] -> {:ok, String.to_integer(num_str), rest}
-      [_] -> {:continuation, &decode/1}
+      [num_str, rest] ->
+        case safe_to_integer(num_str) do
+          {:ok, n} -> {:ok, n, rest}
+          :error -> {:continuation, &decode/1}
+        end
+
+      [_] ->
+        {:continuation, &decode/1}
     end
   end
 
@@ -170,8 +176,14 @@ defmodule Redis.Protocol.RESP3 do
 
   defp decode_big_number(data) do
     case :binary.split(data, @crlf) do
-      [num_str, rest] -> {:ok, String.to_integer(num_str), rest}
-      [_] -> {:continuation, &decode/1}
+      [num_str, rest] ->
+        case safe_to_integer(num_str) do
+          {:ok, n} -> {:ok, n, rest}
+          :error -> {:continuation, &decode/1}
+        end
+
+      [_] ->
+        {:continuation, &decode/1}
     end
   end
 
@@ -179,22 +191,9 @@ defmodule Redis.Protocol.RESP3 do
 
   defp decode_blob_string(data) do
     case :binary.split(data, @crlf) do
-      ["-1", rest] ->
-        {:ok, nil, rest}
-
-      [len_str, rest] ->
-        len = String.to_integer(len_str)
-
-        case rest do
-          <<blob::binary-size(len), "\r\n", rest2::binary>> ->
-            {:ok, blob, rest2}
-
-          _ ->
-            {:continuation, &decode/1}
-        end
-
-      [_] ->
-        {:continuation, &decode/1}
+      ["-1", rest] -> {:ok, nil, rest}
+      [len_str, rest] -> decode_blob(len_str, rest, &{:ok, &1, &2})
+      [_] -> {:continuation, &decode/1}
     end
   end
 
@@ -202,19 +201,8 @@ defmodule Redis.Protocol.RESP3 do
 
   defp decode_blob_error(data) do
     case :binary.split(data, @crlf) do
-      [len_str, rest] ->
-        len = String.to_integer(len_str)
-
-        case rest do
-          <<blob::binary-size(len), "\r\n", rest2::binary>> ->
-            {:ok, %Redis.Error{message: blob}, rest2}
-
-          _ ->
-            {:continuation, &decode/1}
-        end
-
-      [_] ->
-        {:continuation, &decode/1}
+      [len_str, rest] -> decode_blob(len_str, rest, &{:ok, %Redis.Error{message: &1}, &2})
+      [_] -> {:continuation, &decode/1}
     end
   end
 
@@ -223,16 +211,10 @@ defmodule Redis.Protocol.RESP3 do
   defp decode_verbatim_string(data) do
     case :binary.split(data, @crlf) do
       [len_str, rest] ->
-        len = String.to_integer(len_str)
-
-        case rest do
-          <<blob::binary-size(len), "\r\n", rest2::binary>> ->
-            <<enc::binary-size(3), ":", content::binary>> = blob
-            {:ok, {:verbatim, enc, content}, rest2}
-
-          _ ->
-            {:continuation, &decode/1}
-        end
+        decode_blob(len_str, rest, fn blob, rest2 ->
+          <<enc::binary-size(3), ":", content::binary>> = blob
+          {:ok, {:verbatim, enc, content}, rest2}
+        end)
 
       [_] ->
         {:continuation, &decode/1}
@@ -246,41 +228,34 @@ defmodule Redis.Protocol.RESP3 do
       ["-1", rest] ->
         {:ok, nil, rest}
 
-      [count_str, rest] ->
-        count = String.to_integer(count_str)
-        decode_elements(rest, count, [])
-
-      [_] ->
-        {:continuation, &decode/1}
+      _ ->
+        case decode_counted(data) do
+          {:ok, count, rest} -> decode_elements(rest, count, [])
+          :continuation -> {:continuation, &decode/1}
+        end
     end
   end
 
   # --- Map ---
 
   defp decode_map(data) do
-    case :binary.split(data, @crlf) do
-      [count_str, rest] ->
-        count = String.to_integer(count_str)
-        decode_map_pairs(rest, count, %{})
-
-      [_] ->
-        {:continuation, &decode/1}
+    case decode_counted(data) do
+      {:ok, count, rest} -> decode_map_pairs(rest, count, %{})
+      :continuation -> {:continuation, &decode/1}
     end
   end
 
   # --- Set ---
 
   defp decode_set(data) do
-    case :binary.split(data, @crlf) do
-      [count_str, rest] ->
-        count = String.to_integer(count_str)
-
+    case decode_counted(data) do
+      {:ok, count, rest} ->
         case decode_elements(rest, count, []) do
           {:ok, elements, rest2} -> {:ok, MapSet.new(elements), rest2}
           other -> other
         end
 
-      [_] ->
+      :continuation ->
         {:continuation, &decode/1}
     end
   end
@@ -288,16 +263,14 @@ defmodule Redis.Protocol.RESP3 do
   # --- Push ---
 
   defp decode_push(data) do
-    case :binary.split(data, @crlf) do
-      [count_str, rest] ->
-        count = String.to_integer(count_str)
-
+    case decode_counted(data) do
+      {:ok, count, rest} ->
         case decode_elements(rest, count, []) do
           {:ok, elements, rest2} -> {:ok, {:push, elements}, rest2}
           other -> other
         end
 
-      [_] ->
+      :continuation ->
         {:continuation, &decode/1}
     end
   end
@@ -322,5 +295,39 @@ defmodule Redis.Protocol.RESP3 do
     else
       {:continuation, _} -> {:continuation, &decode/1}
     end
+  end
+
+  # Shared helper: parse a length-prefixed blob and apply a callback
+  defp decode_blob(len_str, rest, callback) do
+    case safe_to_integer(len_str) do
+      {:ok, len} ->
+        case rest do
+          <<blob::binary-size(len), "\r\n", rest2::binary>> -> callback.(blob, rest2)
+          _ -> {:continuation, &decode/1}
+        end
+
+      :error ->
+        {:continuation, &decode/1}
+    end
+  end
+
+  # Shared helper: split on CRLF and parse the count as integer
+  defp decode_counted(data) do
+    case :binary.split(data, @crlf) do
+      [count_str, rest] ->
+        case safe_to_integer(count_str) do
+          {:ok, count} -> {:ok, count, rest}
+          :error -> :continuation
+        end
+
+      [_] ->
+        :continuation
+    end
+  end
+
+  defp safe_to_integer(str) do
+    {:ok, String.to_integer(str)}
+  rescue
+    ArgumentError -> :error
   end
 end
