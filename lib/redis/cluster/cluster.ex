@@ -306,9 +306,9 @@ defmodule Redis.Cluster do
   defp discover_from_node(state, host, port) do
     case connect_node(state, host, port) do
       {:ok, conn} ->
-        case Connection.command(conn, ["CLUSTER", "SLOTS"]) do
-          {:ok, slots_data} ->
-            apply_topology(state, slots_data, {host, port}, conn)
+        case fetch_topology(conn) do
+          {:ok, parsed} ->
+            apply_topology(state, parsed, {host, port}, conn)
 
           {:error, reason} ->
             Connection.stop(conn)
@@ -320,8 +320,23 @@ defmodule Redis.Cluster do
     end
   end
 
-  defp apply_topology(state, slots_data, {host, port}, conn) do
-    parsed = Topology.parse_slots(slots_data)
+  # Try CLUSTER SHARDS first (Redis 7.0+), fall back to CLUSTER SLOTS
+  defp fetch_topology(conn, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 5_000)
+
+    case Connection.command(conn, ["CLUSTER", "SHARDS"], timeout: timeout) do
+      {:ok, shards_data} when is_list(shards_data) ->
+        {:ok, Topology.parse_shards(shards_data)}
+
+      _ ->
+        case Connection.command(conn, ["CLUSTER", "SLOTS"], timeout: timeout) do
+          {:ok, slots_data} -> {:ok, Topology.parse_slots(slots_data)}
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
+
+  defp apply_topology(state, parsed, {host, port}, conn) do
     slot_entries = Topology.build_slot_map(parsed)
 
     :ets.delete_all_objects(state.slot_table)
@@ -356,15 +371,15 @@ defmodule Redis.Cluster do
     # Try any existing connection first, with a short timeout to skip dead nodes quickly
     result =
       Enum.find_value(state.connections, fn {_addr, conn} ->
-        case Connection.command(conn, ["CLUSTER", "SLOTS"], timeout: 2_000) do
-          {:ok, data} -> {:ok, data}
+        case fetch_topology(conn, timeout: 2_000) do
+          {:ok, parsed} -> {:ok, parsed}
           _ -> nil
         end
       end)
 
     case result do
-      {:ok, slots_data} ->
-        refresh_from_slots(state, slots_data)
+      {:ok, parsed} ->
+        refresh_from_parsed(state, parsed)
 
       nil ->
         # Fall back to seed nodes
@@ -372,8 +387,7 @@ defmodule Redis.Cluster do
     end
   end
 
-  defp refresh_from_slots(state, slots_data) do
-    parsed = Topology.parse_slots(slots_data)
+  defp refresh_from_parsed(state, parsed) do
     slot_entries = Topology.build_slot_map(parsed)
 
     :ets.delete_all_objects(state.slot_table)

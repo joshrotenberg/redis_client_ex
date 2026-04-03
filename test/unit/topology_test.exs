@@ -140,4 +140,135 @@ defmodule Redis.Cluster.TopologyTest do
       assert Topology.build_replica_map(parsed) == []
     end
   end
+
+  describe "parse_shards/1" do
+    test "parses CLUSTER SHARDS response" do
+      shards = [
+        %{
+          "slots" => [0, 5_460],
+          "nodes" => [
+            %{
+              "id" => "abc123",
+              "ip" => "127.0.0.1",
+              "port" => 7000,
+              "endpoint" => "127.0.0.1",
+              "role" => "master",
+              "health" => "online"
+            },
+            %{
+              "id" => "def456",
+              "ip" => "127.0.0.1",
+              "port" => 7003,
+              "endpoint" => "127.0.0.1",
+              "role" => "replica",
+              "health" => "online"
+            }
+          ]
+        },
+        %{
+          "slots" => [5_461, 10_922],
+          "nodes" => [
+            %{
+              "id" => "ghi789",
+              "ip" => "127.0.0.1",
+              "port" => 7001,
+              "role" => "master",
+              "health" => "online"
+            }
+          ]
+        }
+      ]
+
+      parsed = Topology.parse_shards(shards)
+
+      assert length(parsed) == 2
+      assert {0, 5_460, "127.0.0.1", 7000} in parsed
+      assert {5_461, 10_922, "127.0.0.1", 7001} in parsed
+    end
+
+    test "handles multiple slot ranges per shard" do
+      shards = [
+        %{
+          "slots" => [0, 100, 200, 300],
+          "nodes" => [
+            %{"ip" => "127.0.0.1", "port" => 7000, "role" => "master"}
+          ]
+        }
+      ]
+
+      parsed = Topology.parse_shards(shards)
+      assert {0, 100, "127.0.0.1", 7000} in parsed
+      assert {200, 300, "127.0.0.1", 7000} in parsed
+    end
+
+    test "normalizes empty host" do
+      shards = [
+        %{
+          "slots" => [0, 100],
+          "nodes" => [%{"ip" => "", "port" => 7000, "role" => "master"}]
+        }
+      ]
+
+      [{_, _, host, _}] = Topology.parse_shards(shards)
+      assert host == "127.0.0.1"
+    end
+
+    test "returns empty for missing master" do
+      shards = [
+        %{
+          "slots" => [0, 100],
+          "nodes" => [
+            %{"ip" => "127.0.0.1", "port" => 7003, "role" => "replica"}
+          ]
+        }
+      ]
+
+      assert Topology.parse_shards(shards) == []
+    end
+
+    test "returns empty for invalid input" do
+      assert Topology.parse_shards(:invalid) == []
+      assert Topology.parse_shards([]) == []
+    end
+  end
+
+  describe "parse_shards_with_replicas/1" do
+    test "includes replica info" do
+      shards = [
+        %{
+          "slots" => [0, 5_460],
+          "nodes" => [
+            %{
+              "ip" => "127.0.0.1",
+              "port" => 7000,
+              "endpoint" => "127.0.0.1",
+              "role" => "master"
+            },
+            %{
+              "ip" => "127.0.0.1",
+              "port" => 7003,
+              "endpoint" => "127.0.0.1",
+              "role" => "replica"
+            },
+            %{
+              "ip" => "127.0.0.1",
+              "port" => 7004,
+              "endpoint" => "127.0.0.1",
+              "role" => "replica"
+            }
+          ]
+        }
+      ]
+
+      [{start_slot, end_slot, primary, replicas}] =
+        Topology.parse_shards_with_replicas(shards)
+
+      assert start_slot == 0
+      assert end_slot == 5_460
+      assert primary == {"127.0.0.1", 7000}
+      assert length(replicas) == 2
+      assert {"127.0.0.1", 7003} in replicas
+      assert {"127.0.0.1", 7004} in replicas
+    end
+  end
 end

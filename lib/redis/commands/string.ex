@@ -44,6 +44,8 @@ defmodule Redis.Commands.String do
     * `:nx` - only set if the key does not already exist
     * `:xx` - only set if the key already exists
     * `:get` - return the old value stored at the key
+    * `:ifeq` - only set if the current value equals the given string (Redis 8.0+)
+    * `:ifne` - only set if the current value does not equal the given string (Redis 8.0+)
   """
   @spec set(String.t(), String.t(), keyword()) :: [String.t()]
   def set(key, value, opts \\ []) do
@@ -52,6 +54,8 @@ defmodule Redis.Commands.String do
     cmd = if opts[:px], do: cmd ++ ["PX", to_string(opts[:px])], else: cmd
     cmd = if opts[:nx], do: cmd ++ ["NX"], else: cmd
     cmd = if opts[:xx], do: cmd ++ ["XX"], else: cmd
+    cmd = if opts[:ifeq], do: cmd ++ ["IFEQ", to_string(opts[:ifeq])], else: cmd
+    cmd = if opts[:ifne], do: cmd ++ ["IFNE", to_string(opts[:ifne])], else: cmd
     cmd = if opts[:get], do: cmd ++ ["GET"], else: cmd
     cmd
   end
@@ -166,6 +170,57 @@ defmodule Redis.Commands.String do
 
     cmd = if opts[:withmatchlen], do: cmd ++ ["WITHMATCHLEN"], else: cmd
     cmd
+  end
+
+  # ---------------------------------------------------------------------------
+  # Redis 8.0+ string commands
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Builds a GETDEL command with conditional deletion (Redis 8.0+). Retrieves
+  the value at `key` and deletes it only if the condition is met.
+
+  ## Options
+
+    * `:ifeq` - delete only if the current value equals the given string
+    * `:ifne` - delete only if the current value does not equal the given string
+  """
+  @spec delex(String.t(), keyword()) :: [String.t()]
+  def delex(key, opts \\ []) do
+    cmd = ["GETDEL", key]
+    cmd = if opts[:ifeq], do: cmd ++ ["IFEQ", to_string(opts[:ifeq])], else: cmd
+    cmd = if opts[:ifne], do: cmd ++ ["IFNE", to_string(opts[:ifne])], else: cmd
+    cmd
+  end
+
+  @doc """
+  Builds a DIGEST command to return the hash digest of the value stored at
+  `key` (Redis 8.0+).
+  """
+  @spec digest(String.t()) :: [String.t()]
+  def digest(key), do: ["DIGEST", key]
+
+  @doc """
+  Builds an MSETEX command to atomically set multiple key-value pairs with
+  a shared expiration (Redis 8.0+).
+
+  `kv_pairs` is a list of `{key, value}` tuples.
+
+  ## Options
+
+    * `:ex` - set expiry in seconds
+    * `:px` - set expiry in milliseconds
+    * `:exat` - set expiry as a Unix timestamp in seconds
+    * `:pxat` - set expiry as a Unix timestamp in milliseconds
+  """
+  @spec msetex([{String.t(), String.t()}], keyword()) :: [String.t()]
+  def msetex(kv_pairs, opts \\ []) when is_list(kv_pairs) do
+    cmd = ["MSETEX"]
+    cmd = if opts[:ex], do: cmd ++ ["EX", to_string(opts[:ex])], else: cmd
+    cmd = if opts[:px], do: cmd ++ ["PX", to_string(opts[:px])], else: cmd
+    cmd = if opts[:exat], do: cmd ++ ["EXAT", to_string(opts[:exat])], else: cmd
+    cmd = if opts[:pxat], do: cmd ++ ["PXAT", to_string(opts[:pxat])], else: cmd
+    cmd ++ Enum.flat_map(kv_pairs, fn {k, v} -> [k, to_string(v)] end)
   end
 
   @doc "Deprecated: use getrange/3 instead."

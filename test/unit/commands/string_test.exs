@@ -175,4 +175,79 @@ defmodule Redis.Commands.StringExpandedTest do
       assert S.substr("key", 0, 5) == ["SUBSTR", "key", "0", "5"]
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Redis 8.0+ commands
+  # ---------------------------------------------------------------------------
+
+  describe "SET with IFEQ/IFNE (8.0+)" do
+    test "with IFEQ" do
+      assert S.set("key", "new", ifeq: "old") ==
+               ["SET", "key", "new", "IFEQ", "old"]
+    end
+
+    test "with IFNE" do
+      assert S.set("key", "new", ifne: "old") ==
+               ["SET", "key", "new", "IFNE", "old"]
+    end
+
+    test "with IFEQ and EX" do
+      assert S.set("key", "new", ex: 60, ifeq: "old") ==
+               ["SET", "key", "new", "EX", "60", "IFEQ", "old"]
+    end
+
+    test "with IFEQ and GET" do
+      assert S.set("key", "new", ifeq: "old", get: true) ==
+               ["SET", "key", "new", "IFEQ", "old", "GET"]
+    end
+  end
+
+  describe "DELEX (GETDEL with conditions, 8.0+)" do
+    test "without options" do
+      assert S.delex("key") == ["GETDEL", "key"]
+    end
+
+    test "with IFEQ" do
+      assert S.delex("key", ifeq: "expected") ==
+               ["GETDEL", "key", "IFEQ", "expected"]
+    end
+
+    test "with IFNE" do
+      assert S.delex("key", ifne: "unexpected") ==
+               ["GETDEL", "key", "IFNE", "unexpected"]
+    end
+  end
+
+  describe "DIGEST (8.0+)" do
+    test "basic" do
+      assert S.digest("key") == ["DIGEST", "key"]
+    end
+  end
+
+  describe "MSETEX (8.0+)" do
+    test "with EX" do
+      assert S.msetex([{"k1", "v1"}, {"k2", "v2"}], ex: 60) ==
+               ["MSETEX", "EX", "60", "k1", "v1", "k2", "v2"]
+    end
+
+    test "with PX" do
+      assert S.msetex([{"k1", "v1"}], px: 5000) ==
+               ["MSETEX", "PX", "5000", "k1", "v1"]
+    end
+
+    test "with EXAT" do
+      assert S.msetex([{"k1", "v1"}], exat: 1_893_456_000) ==
+               ["MSETEX", "EXAT", "1893456000", "k1", "v1"]
+    end
+
+    test "with PXAT" do
+      assert S.msetex([{"k1", "v1"}], pxat: 1_893_456_000_000) ==
+               ["MSETEX", "PXAT", "1893456000000", "k1", "v1"]
+    end
+
+    test "without expiry options" do
+      assert S.msetex([{"k1", "v1"}, {"k2", "v2"}]) ==
+               ["MSETEX", "k1", "v1", "k2", "v2"]
+    end
+  end
 end
