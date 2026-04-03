@@ -82,9 +82,8 @@ defmodule Redis.Protocol.RESP3Test do
                RESP3.decode("!20\r\nERR this is an error\r\n")
     end
 
-    test "verbatim string" do
-      assert {:ok, {:verbatim, "txt", "hello"}, ""} =
-               RESP3.decode("=9\r\ntxt:hello\r\n")
+    test "verbatim string is unwrapped to plain string" do
+      assert {:ok, "hello", ""} = RESP3.decode("=9\r\ntxt:hello\r\n")
     end
   end
 

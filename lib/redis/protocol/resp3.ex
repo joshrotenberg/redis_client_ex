@@ -21,7 +21,7 @@ defmodule Redis.Protocol.RESP3 do
   | `%`         | Map             | `map()`                        |
   | `~`         | Set             | `MapSet.t()`                   |
   | `>`         | Push            | `{:push, list()}`              |
-  | `=`         | Verbatim string | `{:verbatim, enc, String.t()}` |
+  | `=`         | Verbatim string | `String.t()` (encoding stripped) |
   | `(`         | Big number      | `integer()`                    |
   """
 
@@ -254,8 +254,8 @@ defmodule Redis.Protocol.RESP3 do
         rest = binary_part(data, pos + 2, byte_size(data) - pos - 2)
 
         decode_blob_body(len_str, rest, fn blob, rest2 ->
-          <<enc::binary-size(3), ":", content::binary>> = blob
-          {:ok, {:verbatim, enc, content}, rest2}
+          <<_enc::binary-size(3), ":", content::binary>> = blob
+          {:ok, content, rest2}
         end)
 
       :nomatch ->
