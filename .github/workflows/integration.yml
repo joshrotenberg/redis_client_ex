@@ -1,0 +1,71 @@
+name: Integration
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # Daily at 6am UTC
+  workflow_dispatch: # Manual trigger
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: Integration (Redis ${{ matrix.redis }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - redis: "7"
+            redis_image: "redis:7"
+            stack: false
+          - redis: "8"
+            redis_image: "redis:8"
+            stack: false
+          - redis: "stack"
+            redis_image: "redis/redis-stack-server:latest"
+            stack: true
+
+    services:
+      redis:
+        image: ${{ matrix.redis_image }}
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.18"
+          otp-version: "27"
+
+      - name: Install redis-server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-server
+          redis-server --version
+
+      - name: Restore deps cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            deps
+            _build
+          key: mix-v3-1.18-27-${{ hashFiles('mix.lock') }}
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Compile
+        run: mix compile
+
+      - name: Run full test suite
+        env:
+          REDIS_STACK: ${{ matrix.stack && 'true' || '' }}
+        run: mix test

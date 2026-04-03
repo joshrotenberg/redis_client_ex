@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}
+  checks:
+    name: Checks (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -19,17 +19,6 @@ jobs:
         include:
           - elixir: "1.18"
             otp: "27"
-
-    services:
-      redis:
-        image: redis/redis-stack-server:latest
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     steps:
       - uses: actions/checkout@v6
@@ -39,19 +28,13 @@ jobs:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
 
-      - name: Install redis-server
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y redis-server
-          redis-server --version
-
       - name: Restore deps cache
         uses: actions/cache@v5
         with:
           path: |
             deps
             _build
-          key: mix-v2-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
+          key: mix-v3-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
 
       - name: Install dependencies
         run: mix deps.get
@@ -70,7 +53,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: _build/test
-          key: plt-v2-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
+          key: plt-v3-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
 
       - name: Create PLTs
         if: steps.plt-cache.outputs.cache-hit != 'true'
@@ -79,10 +62,10 @@ jobs:
       - name: Dialyzer
         run: mix dialyzer
 
-      - name: Run tests
+      - name: Unit tests
         env:
-          REDIS_STACK: "true"
-        run: mix test
+          UNIT_ONLY: "true"
+        run: mix test test/unit/
 
   docs:
     name: Docs
@@ -101,7 +84,7 @@ jobs:
           path: |
             deps
             _build
-          key: mix-docs-v2-1.18-27-${{ hashFiles('mix.lock') }}
+          key: mix-docs-v3-1.18-27-${{ hashFiles('mix.lock') }}
 
       - name: Install dependencies
         run: mix deps.get

@@ -16,17 +16,24 @@ manage Redis instances on custom ports automatically.
 ## Running Tests
 
 ```bash
-# Unit and integration tests (starts Redis automatically)
+# Unit tests only (fast, no Redis needed -- this is what PR CI runs)
+UNIT_ONLY=true mix test test/unit/
+
+# Full suite (needs redis-server, started automatically)
 mix test
 
-# Include Redis Stack tests (JSON, Search -- needs redis-stack-server)
+# Include Redis Stack tests (JSON, Search)
 REDIS_STACK=true mix test
 
-# Include cluster failover tests (slower, starts a 6-node cluster)
+# Include cluster failover tests (slower, 6-node cluster)
 REDIS_CLUSTER_FAILOVER=true mix test
 
-# Include sentinel tests (needs sentinel topology)
+# Include sentinel tests
 REDIS_SENTINEL=true mix test
+
+# Local multi-version testing via Docker
+docker compose up -d
+REDIS_STACK=true mix test    # tests against redis-stack on 6379
 ```
 
 ## Code Quality
@@ -38,10 +45,10 @@ mix format --check-formatted
 mix compile --warnings-as-errors
 mix credo --strict
 mix dialyzer
-mix test
+UNIT_ONLY=true mix test test/unit/
 ```
 
-All of these run in CI.
+All of these run in PR CI. Full integration tests run on a daily schedule.
 
 ## Pull Requests
 
