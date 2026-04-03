@@ -59,6 +59,8 @@ defmodule Redis.Connection do
     callers: :queue.new()
   ]
 
+  @behaviour Redis.Connection.Behaviour
+
   # -------------------------------------------------------------------
   # Public API
   # -------------------------------------------------------------------
@@ -99,6 +101,7 @@ defmodule Redis.Connection do
 
   def start_link, do: start_link([])
 
+  @impl Redis.Connection.Behaviour
   @spec command(GenServer.server(), [String.t()], keyword()) ::
           {:ok, term()} | {:error, term()}
   def command(conn, args, opts \\ []) do
@@ -106,6 +109,7 @@ defmodule Redis.Connection do
     GenServer.call(conn, {:command, args}, timeout)
   end
 
+  @impl Redis.Connection.Behaviour
   @spec pipeline(GenServer.server(), [[String.t()]], keyword()) ::
           {:ok, [term()]} | {:error, term()}
   def pipeline(conn, commands, opts \\ []) do
@@ -113,6 +117,7 @@ defmodule Redis.Connection do
     GenServer.call(conn, {:pipeline, commands}, timeout)
   end
 
+  @impl Redis.Connection.Behaviour
   @spec transaction(GenServer.server(), [[String.t()]], keyword()) ::
           {:ok, [term()]} | {:error, term()}
   def transaction(conn, commands, opts \\ []) do
@@ -229,6 +234,7 @@ defmodule Redis.Connection do
   end
 
   @spec stop(GenServer.server()) :: :ok
+  @impl Redis.Connection.Behaviour
   def stop(conn), do: GenServer.stop(conn, :normal)
 
   # -------------------------------------------------------------------
