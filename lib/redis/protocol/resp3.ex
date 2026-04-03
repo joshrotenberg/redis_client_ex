@@ -71,35 +71,33 @@ defmodule Redis.Protocol.RESP3 do
   def decode(<<>>), do: {:continuation, &decode/1}
   def decode(data), do: decode_type(data)
 
-  # Simple string: +OK\r\n -- fast path for common responses
+  # Null, boolean — fixed-size, check first
+  defp decode_type(<<"_\r\n", rest::binary>>), do: {:ok, nil, rest}
+  defp decode_type(<<"#t\r\n", rest::binary>>), do: {:ok, true, rest}
+  defp decode_type(<<"#f\r\n", rest::binary>>), do: {:ok, false, rest}
+
+  # Simple string — fast path for common responses
   defp decode_type(<<"+OK\r\n", rest::binary>>), do: {:ok, "OK", rest}
   defp decode_type(<<"+PONG\r\n", rest::binary>>), do: {:ok, "PONG", rest}
   defp decode_type(<<"+QUEUED\r\n", rest::binary>>), do: {:ok, "QUEUED", rest}
   defp decode_type(<<"+", rest::binary>>), do: decode_simple_string(rest)
 
-  # Simple error: -ERR message\r\n
+  # Simple error
   defp decode_type(<<"-", rest::binary>>), do: decode_simple_error(rest)
 
-  # Number: :42\r\n -- fast path for common small integers
+  # Number — fast path for common small integers
   defp decode_type(<<":0\r\n", rest::binary>>), do: {:ok, 0, rest}
   defp decode_type(<<":1\r\n", rest::binary>>), do: {:ok, 1, rest}
-  defp decode_type(<<"-1\r\n", rest::binary>>), do: {:ok, -1, rest}
+  defp decode_type(<<":-1\r\n", rest::binary>>), do: {:ok, -1, rest}
   defp decode_type(<<":", rest::binary>>), do: decode_number(rest)
 
-  # Blob string: $5\r\nhello\r\n
+  # Blob string
   defp decode_type(<<"$", rest::binary>>), do: decode_blob_string(rest)
 
-  # Array: *3\r\n...
+  # Array
   defp decode_type(<<"*", rest::binary>>), do: decode_array(rest)
 
-  # Null: _\r\n
-  defp decode_type(<<"_\r\n", rest::binary>>), do: {:ok, nil, rest}
-
-  # Boolean: #t\r\n or #f\r\n
-  defp decode_type(<<"#t\r\n", rest::binary>>), do: {:ok, true, rest}
-  defp decode_type(<<"#f\r\n", rest::binary>>), do: {:ok, false, rest}
-
-  # Double: ,1.5\r\n
+  # Double
   defp decode_type(<<",", rest::binary>>), do: decode_double(rest)
 
   # Big number: (3492890328409238509324850943850943825024385\r\n
@@ -202,12 +200,18 @@ defmodule Redis.Protocol.RESP3 do
   # --- Big number ---
 
   defp decode_big_number(data) do
-    case :binary.split(data, @crlf) do
-      [num_str, rest] ->
+    case :binary.match(data, "\r\n") do
+      {pos, 2} ->
+        num_str = binary_part(data, 0, pos)
+        rest = binary_part(data, pos + 2, byte_size(data) - pos - 2)
+
         case safe_to_integer(num_str) do
           {:ok, n} -> {:ok, n, rest}
           :error -> {:continuation, &decode/1}
         end
+
+      :nomatch ->
+        {:continuation, &decode/1}
 
       [_] ->
         {:continuation, &decode/1}
@@ -216,50 +220,60 @@ defmodule Redis.Protocol.RESP3 do
 
   # --- Blob string ---
 
+  defp decode_blob_string(<<"-1\r\n", rest::binary>>), do: {:ok, nil, rest}
+
   defp decode_blob_string(data) do
-    case :binary.split(data, @crlf) do
-      ["-1", rest] -> {:ok, nil, rest}
-      [len_str, rest] -> decode_blob(len_str, rest, &{:ok, &1, &2})
-      [_] -> {:continuation, &decode/1}
+    case :binary.match(data, "\r\n") do
+      {pos, 2} ->
+        len_str = binary_part(data, 0, pos)
+        rest = binary_part(data, pos + 2, byte_size(data) - pos - 2)
+        decode_blob_body(len_str, rest, &{:ok, &1, &2})
+
+      :nomatch ->
+        {:continuation, &decode/1}
     end
   end
 
   # --- Blob error ---
 
   defp decode_blob_error(data) do
-    case :binary.split(data, @crlf) do
-      [len_str, rest] -> decode_blob(len_str, rest, &{:ok, %Redis.Error{message: &1}, &2})
-      [_] -> {:continuation, &decode/1}
+    case :binary.match(data, "\r\n") do
+      {pos, 2} ->
+        len_str = binary_part(data, 0, pos)
+        rest = binary_part(data, pos + 2, byte_size(data) - pos - 2)
+        decode_blob_body(len_str, rest, &{:ok, %Redis.Error{message: &1}, &2})
+
+      :nomatch ->
+        {:continuation, &decode/1}
     end
   end
 
   # --- Verbatim string ---
 
   defp decode_verbatim_string(data) do
-    case :binary.split(data, @crlf) do
-      [len_str, rest] ->
-        decode_blob(len_str, rest, fn blob, rest2 ->
+    case :binary.match(data, "\r\n") do
+      {pos, 2} ->
+        len_str = binary_part(data, 0, pos)
+        rest = binary_part(data, pos + 2, byte_size(data) - pos - 2)
+
+        decode_blob_body(len_str, rest, fn blob, rest2 ->
           <<enc::binary-size(3), ":", content::binary>> = blob
           {:ok, {:verbatim, enc, content}, rest2}
         end)
 
-      [_] ->
+      :nomatch ->
         {:continuation, &decode/1}
     end
   end
 
   # --- Array ---
 
-  defp decode_array(data) do
-    case :binary.split(data, @crlf) do
-      ["-1", rest] ->
-        {:ok, nil, rest}
+  defp decode_array(<<"-1\r\n", rest::binary>>), do: {:ok, nil, rest}
 
-      _ ->
-        case decode_counted(data) do
-          {:ok, count, rest} -> decode_elements(rest, count, [])
-          :continuation -> {:continuation, &decode/1}
-        end
+  defp decode_array(data) do
+    case decode_counted(data) do
+      {:ok, count, rest} -> decode_elements(rest, count, [])
+      :continuation -> {:continuation, &decode/1}
     end
   end
 
@@ -325,7 +339,7 @@ defmodule Redis.Protocol.RESP3 do
   end
 
   # Shared helper: parse a length-prefixed blob and apply a callback
-  defp decode_blob(len_str, rest, callback) do
+  defp decode_blob_body(len_str, rest, callback) do
     case safe_to_integer(len_str) do
       {:ok, len} ->
         case rest do
