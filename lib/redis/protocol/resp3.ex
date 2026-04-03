@@ -212,9 +212,6 @@ defmodule Redis.Protocol.RESP3 do
 
       :nomatch ->
         {:continuation, &decode/1}
-
-      [_] ->
-        {:continuation, &decode/1}
     end
   end
 
