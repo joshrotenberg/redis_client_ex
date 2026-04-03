@@ -53,6 +53,37 @@ All of these run in CI.
 - Add tests for new features
 - Update documentation for public API changes
 
+## Test Organization
+
+Tests are organized by category:
+
+```
+test/
+  unit/               # No Redis needed
+    protocol/         # RESP2, RESP3, property tests, coerce
+    commands/         # All 21 command builder tests (pure functions)
+    uri_test.exs      # URI parsing
+    router_test.exs   # Cluster slot routing
+    redis_test.exs    # Top-level Redis module API
+  integration/        # Needs redis-server (started by test_helper.exs)
+    connection_test.exs, pool_test.exs, cluster_test.exs, ...
+    integration_test.exs  # Cross-cutting resilience/reconnection tests
+  stack/              # Needs Redis Stack (JSON + Search modules)
+    json_*.exs, search_*.exs
+  adapters/           # Phoenix.PubSub, Plug session store
+    phoenix_pubsub_test.exs, plug_session_test.exs
+```
+
+### Test Tags
+
+| Tag | Excluded by default | Enable with |
+|-----|-------------------|-------------|
+| `:redis_stack` | Yes | `REDIS_STACK=true` |
+| `:sentinel` | Yes | `REDIS_SENTINEL=true` |
+| `:cluster_failover` | Yes | `REDIS_CLUSTER_FAILOVER=true` |
+
+All other tests run in CI on every push.
+
 ## Architecture
 
 The codebase is organized by concern:
@@ -67,7 +98,10 @@ lib/redis/
   resilience/     # Circuit breaker, retry, bulkhead, coalesce
   commands/       # 21 command builder modules (pure functions)
   consumer.ex     # Streams consumer group GenServer
+  json.ex         # High-level JSON document API
+  search.ex       # High-level search API
   phoenix_pubsub.ex  # Phoenix.PubSub adapter
+  plug_session.ex # Plug session store
   protocol/       # RESP2/RESP3 encode/decode
   script.ex       # Lua script helper
   telemetry.ex    # Telemetry events
