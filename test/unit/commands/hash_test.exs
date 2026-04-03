@@ -114,4 +114,81 @@ defmodule Redis.Commands.HashExpandedTest do
                ["HMSET", "h", "f1", "v1", "f2", "v2"]
     end
   end
+
+  describe "hash field expiration (7.4+)" do
+    test "HEXPIRE" do
+      assert Hash.hexpire("h", 60, ["f1", "f2"]) ==
+               ["HEXPIRE", "h", "60", "FIELDS", "2", "f1", "f2"]
+    end
+
+    test "HEXPIRE with NX" do
+      assert Hash.hexpire("h", 60, ["f1"], nx: true) ==
+               ["HEXPIRE", "h", "60", "NX", "FIELDS", "1", "f1"]
+    end
+
+    test "HEXPIRE with GT" do
+      assert Hash.hexpire("h", 60, ["f1"], gt: true) ==
+               ["HEXPIRE", "h", "60", "GT", "FIELDS", "1", "f1"]
+    end
+
+    test "HPEXPIRE" do
+      assert Hash.hpexpire("h", 5_000, ["f1"]) ==
+               ["HPEXPIRE", "h", "5000", "FIELDS", "1", "f1"]
+    end
+
+    test "HEXPIREAT" do
+      assert Hash.hexpireat("h", 1_700_000_000, ["f1"]) ==
+               ["HEXPIREAT", "h", "1700000000", "FIELDS", "1", "f1"]
+    end
+
+    test "HPEXPIREAT" do
+      assert Hash.hpexpireat("h", 1_700_000_000_000, ["f1"]) ==
+               ["HPEXPIREAT", "h", "1700000000000", "FIELDS", "1", "f1"]
+    end
+
+    test "HTTL" do
+      assert Hash.httl("h", ["f1", "f2"]) == ["HTTL", "h", "FIELDS", "2", "f1", "f2"]
+    end
+
+    test "HPTTL" do
+      assert Hash.hpttl("h", ["f1"]) == ["HPTTL", "h", "FIELDS", "1", "f1"]
+    end
+
+    test "HEXPIRETIME" do
+      assert Hash.hexpiretime("h", ["f1"]) == ["HEXPIRETIME", "h", "FIELDS", "1", "f1"]
+    end
+
+    test "HPEXPIRETIME" do
+      assert Hash.hpexpiretime("h", ["f1"]) == ["HPEXPIRETIME", "h", "FIELDS", "1", "f1"]
+    end
+
+    test "HPERSIST" do
+      assert Hash.hpersist("h", ["f1", "f2"]) == ["HPERSIST", "h", "FIELDS", "2", "f1", "f2"]
+    end
+  end
+
+  describe "Redis 8.0+ hash commands" do
+    test "HGETEX" do
+      assert Hash.hgetex("h", ["f1", "f2"]) == ["HGETEX", "h", "FIELDS", "2", "f1", "f2"]
+    end
+
+    test "HGETEX with EX" do
+      assert Hash.hgetex("h", ["f1"], ex: 60) ==
+               ["HGETEX", "h", "FIELDS", "1", "f1", "EX", "60"]
+    end
+
+    test "HGETEX with PERSIST" do
+      assert Hash.hgetex("h", ["f1"], persist: true) ==
+               ["HGETEX", "h", "FIELDS", "1", "f1", "PERSIST"]
+    end
+
+    test "HSETEX" do
+      assert Hash.hsetex("h", [{"f1", "v1"}, {"f2", "v2"}], ex: 60) ==
+               ["HSETEX", "h", "FIELDS", "2", "f1", "v1", "f2", "v2", "EX", "60"]
+    end
+
+    test "HGETDEL" do
+      assert Hash.hgetdel("h", ["f1", "f2"]) == ["HGETDEL", "h", "FIELDS", "2", "f1", "f2"]
+    end
+  end
 end

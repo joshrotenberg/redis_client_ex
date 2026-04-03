@@ -117,4 +117,119 @@ defmodule Redis.Commands.Hash do
   def hmset(key, pairs) when is_list(pairs) do
     ["HMSET", key | Enum.flat_map(pairs, fn {f, v} -> [f, to_string(v)] end)]
   end
+
+  # -------------------------------------------------------------------
+  # Hash field expiration (Redis 7.4+)
+  # -------------------------------------------------------------------
+
+  @doc "HEXPIRE — set TTL in seconds on hash fields. Options: :nx, :xx, :gt, :lt"
+  @spec hexpire(String.t(), integer(), [String.t()], keyword()) :: [String.t()]
+  def hexpire(key, seconds, fields, opts \\ []) when is_list(fields) do
+    ["HEXPIRE", key, to_string(seconds)] ++ condition_args(opts) ++ fields_args(fields)
+  end
+
+  @doc "HPEXPIRE — set TTL in milliseconds on hash fields."
+  @spec hpexpire(String.t(), integer(), [String.t()], keyword()) :: [String.t()]
+  def hpexpire(key, ms, fields, opts \\ []) when is_list(fields) do
+    ["HPEXPIRE", key, to_string(ms)] ++ condition_args(opts) ++ fields_args(fields)
+  end
+
+  @doc "HEXPIREAT — set expiry as Unix timestamp (seconds) on hash fields."
+  @spec hexpireat(String.t(), integer(), [String.t()], keyword()) :: [String.t()]
+  def hexpireat(key, timestamp, fields, opts \\ []) when is_list(fields) do
+    ["HEXPIREAT", key, to_string(timestamp)] ++ condition_args(opts) ++ fields_args(fields)
+  end
+
+  @doc "HPEXPIREAT — set expiry as Unix timestamp (milliseconds) on hash fields."
+  @spec hpexpireat(String.t(), integer(), [String.t()], keyword()) :: [String.t()]
+  def hpexpireat(key, ms_timestamp, fields, opts \\ []) when is_list(fields) do
+    ["HPEXPIREAT", key, to_string(ms_timestamp)] ++ condition_args(opts) ++ fields_args(fields)
+  end
+
+  @doc "HTTL — get TTL in seconds for hash fields."
+  @spec httl(String.t(), [String.t()]) :: [String.t()]
+  def httl(key, fields) when is_list(fields) do
+    ["HTTL", key | fields_args(fields)]
+  end
+
+  @doc "HPTTL — get TTL in milliseconds for hash fields."
+  @spec hpttl(String.t(), [String.t()]) :: [String.t()]
+  def hpttl(key, fields) when is_list(fields) do
+    ["HPTTL", key | fields_args(fields)]
+  end
+
+  @doc "HEXPIRETIME — get expiry as Unix timestamp (seconds) for hash fields."
+  @spec hexpiretime(String.t(), [String.t()]) :: [String.t()]
+  def hexpiretime(key, fields) when is_list(fields) do
+    ["HEXPIRETIME", key | fields_args(fields)]
+  end
+
+  @doc "HPEXPIRETIME — get expiry as Unix timestamp (ms) for hash fields."
+  @spec hpexpiretime(String.t(), [String.t()]) :: [String.t()]
+  def hpexpiretime(key, fields) when is_list(fields) do
+    ["HPEXPIRETIME", key | fields_args(fields)]
+  end
+
+  @doc "HPERSIST — remove TTL from hash fields."
+  @spec hpersist(String.t(), [String.t()]) :: [String.t()]
+  def hpersist(key, fields) when is_list(fields) do
+    ["HPERSIST", key | fields_args(fields)]
+  end
+
+  # -------------------------------------------------------------------
+  # Redis 8.0+ hash commands
+  # -------------------------------------------------------------------
+
+  @doc "HGETEX — get fields and optionally set expiration. Options: :ex, :px, :exat, :pxat, :persist"
+  @spec hgetex(String.t(), [String.t()], keyword()) :: [String.t()]
+  def hgetex(key, fields, opts \\ []) when is_list(fields) do
+    ["HGETEX", key | fields_args(fields)] ++ expiry_args(opts)
+  end
+
+  @doc "HSETEX — set fields with expiration. Options: :ex, :px, :exat, :pxat"
+  @spec hsetex(String.t(), [{String.t(), String.t()}], keyword()) :: [String.t()]
+  def hsetex(key, field_values, opts \\ []) when is_list(field_values) do
+    fv = Enum.flat_map(field_values, fn {f, v} -> [f, to_string(v)] end)
+    ["HSETEX", key | fields_args_raw(fv)] ++ expiry_args(opts)
+  end
+
+  @doc "HGETDEL — get and delete hash fields atomically."
+  @spec hgetdel(String.t(), [String.t()]) :: [String.t()]
+  def hgetdel(key, fields) when is_list(fields) do
+    ["HGETDEL", key | fields_args(fields)]
+  end
+
+  # -------------------------------------------------------------------
+  # Helpers
+  # -------------------------------------------------------------------
+
+  defp fields_args(fields) do
+    ["FIELDS", to_string(length(fields)) | fields]
+  end
+
+  defp fields_args_raw(flat_list) do
+    count = div(length(flat_list), 2)
+    ["FIELDS", to_string(count) | flat_list]
+  end
+
+  defp condition_args(opts) do
+    cond do
+      opts[:nx] -> ["NX"]
+      opts[:xx] -> ["XX"]
+      opts[:gt] -> ["GT"]
+      opts[:lt] -> ["LT"]
+      true -> []
+    end
+  end
+
+  defp expiry_args(opts) do
+    cond do
+      opts[:ex] -> ["EX", to_string(opts[:ex])]
+      opts[:px] -> ["PX", to_string(opts[:px])]
+      opts[:exat] -> ["EXAT", to_string(opts[:exat])]
+      opts[:pxat] -> ["PXAT", to_string(opts[:pxat])]
+      opts[:persist] -> ["PERSIST"]
+      true -> []
+    end
+  end
 end
