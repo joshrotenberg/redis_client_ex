@@ -71,13 +71,19 @@ defmodule Redis.Protocol.RESP3 do
   def decode(<<>>), do: {:continuation, &decode/1}
   def decode(data), do: decode_type(data)
 
-  # Simple string: +OK\r\n
+  # Simple string: +OK\r\n -- fast path for common responses
+  defp decode_type(<<"+OK\r\n", rest::binary>>), do: {:ok, "OK", rest}
+  defp decode_type(<<"+PONG\r\n", rest::binary>>), do: {:ok, "PONG", rest}
+  defp decode_type(<<"+QUEUED\r\n", rest::binary>>), do: {:ok, "QUEUED", rest}
   defp decode_type(<<"+", rest::binary>>), do: decode_simple_string(rest)
 
   # Simple error: -ERR message\r\n
   defp decode_type(<<"-", rest::binary>>), do: decode_simple_error(rest)
 
-  # Number: :42\r\n
+  # Number: :42\r\n -- fast path for common small integers
+  defp decode_type(<<":0\r\n", rest::binary>>), do: {:ok, 0, rest}
+  defp decode_type(<<":1\r\n", rest::binary>>), do: {:ok, 1, rest}
+  defp decode_type(<<"-1\r\n", rest::binary>>), do: {:ok, -1, rest}
   defp decode_type(<<":", rest::binary>>), do: decode_number(rest)
 
   # Blob string: $5\r\nhello\r\n
@@ -120,32 +126,45 @@ defmodule Redis.Protocol.RESP3 do
   # --- Simple string ---
 
   defp decode_simple_string(data) do
-    case :binary.split(data, @crlf) do
-      [str, rest] -> {:ok, str, rest}
-      [_] -> {:continuation, &decode/1}
+    case :binary.match(data, "\r\n") do
+      {pos, 2} ->
+        str = binary_part(data, 0, pos)
+        rest = binary_part(data, pos + 2, byte_size(data) - pos - 2)
+        {:ok, str, rest}
+
+      :nomatch ->
+        {:continuation, &decode/1}
     end
   end
 
   # --- Simple error ---
 
   defp decode_simple_error(data) do
-    case :binary.split(data, @crlf) do
-      [msg, rest] -> {:ok, %Redis.Error{message: msg}, rest}
-      [_] -> {:continuation, &decode/1}
+    case :binary.match(data, "\r\n") do
+      {pos, 2} ->
+        msg = binary_part(data, 0, pos)
+        rest = binary_part(data, pos + 2, byte_size(data) - pos - 2)
+        {:ok, %Redis.Error{message: msg}, rest}
+
+      :nomatch ->
+        {:continuation, &decode/1}
     end
   end
 
   # --- Number ---
 
   defp decode_number(data) do
-    case :binary.split(data, @crlf) do
-      [num_str, rest] ->
+    case :binary.match(data, "\r\n") do
+      {pos, 2} ->
+        num_str = binary_part(data, 0, pos)
+        rest = binary_part(data, pos + 2, byte_size(data) - pos - 2)
+
         case safe_to_integer(num_str) do
           {:ok, n} -> {:ok, n, rest}
           :error -> {:continuation, &decode/1}
         end
 
-      [_] ->
+      :nomatch ->
         {:continuation, &decode/1}
     end
   end
@@ -153,11 +172,19 @@ defmodule Redis.Protocol.RESP3 do
   # --- Double ---
 
   defp decode_double(data) do
-    case :binary.split(data, @crlf) do
-      ["inf", rest] -> {:ok, :infinity, rest}
-      ["-inf", rest] -> {:ok, :neg_infinity, rest}
-      [str, rest] -> {:ok, parse_double(str), rest}
-      [_] -> {:continuation, &decode/1}
+    case :binary.match(data, "\r\n") do
+      {pos, 2} ->
+        str = binary_part(data, 0, pos)
+        rest = binary_part(data, pos + 2, byte_size(data) - pos - 2)
+
+        case str do
+          "inf" -> {:ok, :infinity, rest}
+          "-inf" -> {:ok, :neg_infinity, rest}
+          _ -> {:ok, parse_double(str), rest}
+        end
+
+      :nomatch ->
+        {:continuation, &decode/1}
     end
   end
 
@@ -311,23 +338,29 @@ defmodule Redis.Protocol.RESP3 do
     end
   end
 
-  # Shared helper: split on CRLF and parse the count as integer
+  # Shared helper: find CRLF and parse the count as integer
   defp decode_counted(data) do
-    case :binary.split(data, @crlf) do
-      [count_str, rest] ->
+    case :binary.match(data, "\r\n") do
+      {pos, 2} ->
+        count_str = binary_part(data, 0, pos)
+        rest = binary_part(data, pos + 2, byte_size(data) - pos - 2)
+
         case safe_to_integer(count_str) do
           {:ok, count} -> {:ok, count, rest}
           :error -> :continuation
         end
 
-      [_] ->
+      :nomatch ->
         :continuation
     end
   end
 
+  defp safe_to_integer(""), do: :error
+
   defp safe_to_integer(str) do
-    {:ok, String.to_integer(str)}
-  rescue
-    ArgumentError -> :error
+    case Integer.parse(str) do
+      {n, ""} -> {:ok, n}
+      _ -> :error
+    end
   end
 end
