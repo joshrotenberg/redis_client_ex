@@ -14,7 +14,7 @@ RESP3 native. Cluster-aware. Client-side caching. Resilience built in. Zero requ
 ```elixir
 def deps do
   [
-    {:redis_client_ex, "~> 0.3"}
+    {:redis_client_ex, "~> 0.5"}
   ]
 end
 ```
@@ -369,7 +369,7 @@ Redis.Resilience.command(conn, ["GET", "key"])
 - **Client-side caching** via RESP3 server-assisted invalidation + ETS
 - **Connection pool** with round-robin/random dispatch
 - **Resilience** patterns: circuit breaker, retry with backoff, request coalescing, bulkhead
-- **341 command builders** across 21 modules
+- **356 command builders** across 21 modules
 - **Lua scripting** with automatic EVALSHA/EVAL fallback
 - **Telemetry** events for connection lifecycle and command pipeline
 
