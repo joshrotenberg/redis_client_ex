@@ -228,6 +228,32 @@ Redis.command(conn, ["XADD", "orders", "*", "item", "widget", "qty", "5"])
 Scale by adding more consumers with different `:consumer` names --
 Redis distributes messages across the group automatically.
 
+## JSON Documents
+
+High-level API for RedisJSON. Maps in, maps out, with atom or list path
+syntax instead of JSONPath strings.
+
+```elixir
+# Store and retrieve documents
+Redis.JSON.set(conn, "user:1", %{name: "Alice", age: 30, tags: ["admin"]})
+{:ok, %{"name" => "Alice", "age" => 30}} = Redis.JSON.get(conn, "user:1", fields: [:name, :age])
+
+# Nested updates
+Redis.JSON.put(conn, "user:1", [:address, :city], "NYC")
+
+# Merge (like PATCH)
+Redis.JSON.merge(conn, "user:1", %{status: "online", last_seen: "2026-04-03"})
+
+# Atomic operations
+{:ok, 31} = Redis.JSON.incr(conn, "user:1", :age, 1)
+
+# Array operations
+{:ok, 4} = Redis.JSON.append(conn, "user:1", :tags, "moderator")
+{:ok, "moderator"} = Redis.JSON.pop(conn, "user:1", :tags)
+```
+
+For raw RedisJSON commands, see `Redis.Commands.JSON`.
+
 ## Search
 
 High-level search API over RediSearch. Define indexes with keywords, push
@@ -337,6 +363,7 @@ Redis.Resilience.command(conn, ["GET", "key"])
 - **Phoenix.PubSub adapter** for cross-node broadcasting (optional dep)
 - **Streams Consumer** with consumer groups, auto-ack, and pending message recovery
 - **WATCH transactions** with automatic retry on conflict
+- **JSON documents** with map-based CRUD, nested paths, atomic operations (Redis Stack)
 - **Search** with Elixir filter expressions, auto-coercion, parsed results (Redis Stack)
 - **Plug session store** with configurable TTL
 - **Client-side caching** via RESP3 server-assisted invalidation + ETS
