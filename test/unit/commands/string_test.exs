@@ -175,4 +175,54 @@ defmodule Redis.Commands.StringExpandedTest do
       assert S.substr("key", 0, 5) == ["SUBSTR", "key", "0", "5"]
     end
   end
+
+  describe "SET with compare-and-set (8.4+)" do
+    test "SET with IFEQ" do
+      assert S.set("k", "new", ifeq: "old") == ["SET", "k", "new", "IFEQ", "old"]
+    end
+
+    test "SET with IFNE" do
+      assert S.set("k", "new", ifne: "old") == ["SET", "k", "new", "IFNE", "old"]
+    end
+
+    test "SET with IFEQ and EX" do
+      assert S.set("k", "v", ex: 60, ifeq: "old") ==
+               ["SET", "k", "v", "EX", "60", "IFEQ", "old"]
+    end
+  end
+
+  describe "DELEX (8.4+)" do
+    test "basic" do
+      assert S.delex("k") == ["DELEX", "k"]
+    end
+
+    test "with IFEQ" do
+      assert S.delex("k", ifeq: "val") == ["DELEX", "k", "IFEQ", "val"]
+    end
+
+    test "with IFNE" do
+      assert S.delex("k", ifne: "val") == ["DELEX", "k", "IFNE", "val"]
+    end
+  end
+
+  describe "DIGEST (8.4+)" do
+    test "basic" do
+      assert S.digest("k") == ["DIGEST", "k"]
+    end
+  end
+
+  describe "MSETEX (8.4+)" do
+    test "with EX" do
+      assert S.msetex([{"k1", "v1"}, {"k2", "v2"}], ex: 60) ==
+               ["MSETEX", "EX", "60", "k1", "v1", "k2", "v2"]
+    end
+
+    test "with PX" do
+      assert S.msetex([{"k1", "v1"}], px: 5_000) == ["MSETEX", "PX", "5000", "k1", "v1"]
+    end
+
+    test "without expiry" do
+      assert S.msetex([{"k1", "v1"}]) == ["MSETEX", "k1", "v1"]
+    end
+  end
 end

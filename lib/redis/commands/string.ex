@@ -44,6 +44,8 @@ defmodule Redis.Commands.String do
     * `:nx` - only set if the key does not already exist
     * `:xx` - only set if the key already exists
     * `:get` - return the old value stored at the key
+    * `:ifeq` - compare-and-set: only set if current value equals this (Redis 8.4+)
+    * `:ifne` - compare-and-set: only set if current value does not equal this (Redis 8.4+)
   """
   @spec set(String.t(), String.t(), keyword()) :: [String.t()]
   def set(key, value, opts \\ []) do
@@ -53,6 +55,8 @@ defmodule Redis.Commands.String do
     cmd = if opts[:nx], do: cmd ++ ["NX"], else: cmd
     cmd = if opts[:xx], do: cmd ++ ["XX"], else: cmd
     cmd = if opts[:get], do: cmd ++ ["GET"], else: cmd
+    cmd = if opts[:ifeq], do: cmd ++ ["IFEQ", to_string(opts[:ifeq])], else: cmd
+    cmd = if opts[:ifne], do: cmd ++ ["IFNE", to_string(opts[:ifne])], else: cmd
     cmd
   end
 
@@ -171,4 +175,37 @@ defmodule Redis.Commands.String do
   @doc "Deprecated: use getrange/3 instead."
   @spec substr(String.t(), integer(), integer()) :: [String.t()]
   def substr(key, start, stop), do: ["SUBSTR", key, to_string(start), to_string(stop)]
+
+  # -------------------------------------------------------------------
+  # Redis 8.4+ commands
+  # -------------------------------------------------------------------
+
+  @doc "DELEX — conditionally delete a key. Options: :ifeq, :ifne"
+  @spec delex(String.t(), keyword()) :: [String.t()]
+  def delex(key, opts \\ []) do
+    cmd = ["DELEX", key]
+    cmd = if opts[:ifeq], do: cmd ++ ["IFEQ", to_string(opts[:ifeq])], else: cmd
+    cmd = if opts[:ifne], do: cmd ++ ["IFNE", to_string(opts[:ifne])], else: cmd
+    cmd
+  end
+
+  @doc "DIGEST — get hash digest of a string value."
+  @spec digest(String.t()) :: [String.t()]
+  def digest(key), do: ["DIGEST", key]
+
+  @doc "MSETEX — set multiple keys with expiration. Options: :ex, :px, :exat, :pxat"
+  @spec msetex([{String.t(), String.t()}], keyword()) :: [String.t()]
+  def msetex(kv_pairs, opts \\ []) when is_list(kv_pairs) do
+    expiry =
+      cond do
+        opts[:ex] -> ["EX", to_string(opts[:ex])]
+        opts[:px] -> ["PX", to_string(opts[:px])]
+        opts[:exat] -> ["EXAT", to_string(opts[:exat])]
+        opts[:pxat] -> ["PXAT", to_string(opts[:pxat])]
+        true -> []
+      end
+
+    kvs = Enum.flat_map(kv_pairs, fn {k, v} -> [k, to_string(v)] end)
+    ["MSETEX" | expiry] ++ kvs
+  end
 end
