@@ -69,3 +69,9 @@ jobs:
         env:
           REDIS_STACK: ${{ matrix.stack && 'true' || '' }}
         run: mix test
+
+      - name: Run version compatibility tests
+        env:
+          REDIS_COMPAT: "true"
+          REDIS_PORT: "6379"
+        run: mix test test/compat/
