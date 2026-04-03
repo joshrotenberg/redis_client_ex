@@ -471,8 +471,9 @@ defmodule Redis.Connection do
   defp handshake(state) do
     with {:ok, state} <- negotiate_protocol(state),
          {:ok, state} <- maybe_auth(state),
-         {:ok, state} <- maybe_select(state) do
-      maybe_set_client_name(state)
+         {:ok, state} <- maybe_select(state),
+         {:ok, state} <- maybe_set_client_name(state) do
+      maybe_set_client_info(state)
     end
   end
 
@@ -544,6 +545,23 @@ defmodule Redis.Connection do
   defp maybe_set_client_name(state) do
     case sync_command(state, ["CLIENT", "SETNAME", state.client_name]) do
       {:ok, "OK", state} -> {:ok, state}
+      {:ok, _, state} -> {:ok, state}
+      {:error, _} -> {:ok, state}
+    end
+  end
+
+  # CLIENT SETINFO (Redis 7.2+) -- silently ignored on older versions
+  defp maybe_set_client_info(state) do
+    version = Application.spec(:redis, :vsn) |> to_string()
+
+    # Best-effort: don't fail the handshake if these aren't supported
+    state =
+      case sync_command(state, ["CLIENT", "SETINFO", "LIB-NAME", "redis_client_ex"]) do
+        {:ok, _, state} -> state
+        {:error, _} -> state
+      end
+
+    case sync_command(state, ["CLIENT", "SETINFO", "LIB-VER", version]) do
       {:ok, _, state} -> {:ok, state}
       {:error, _} -> {:ok, state}
     end
