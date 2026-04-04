@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0](https://github.com/joshrotenberg/redis_client_ex/compare/v0.4.0...v0.5.0) (2026-04-04)
+
+
+### Features
+
+* add high-level Redis Search API (closes [#64](https://github.com/joshrotenberg/redis_client_ex/issues/64)) ([#66](https://github.com/joshrotenberg/redis_client_ex/issues/66)) ([7f60131](https://github.com/joshrotenberg/redis_client_ex/commit/7f601312152f8a679a2aa651c3f452314d5bc93a))
+* high-level Redis JSON document API ([#73](https://github.com/joshrotenberg/redis_client_ex/issues/73)) ([ea88e91](https://github.com/joshrotenberg/redis_client_ex/commit/ea88e91c8b9eb20aa79e7db1571e3c8411c88758))
+* migrate from CLUSTER SLOTS to CLUSTER SHARDS ([#88](https://github.com/joshrotenberg/redis_client_ex/issues/88)) ([5a47947](https://github.com/joshrotenberg/redis_client_ex/commit/5a47947cdaad4df3cd999a83f1d5bd44319a9b69))
+* send CLIENT SETINFO on connect (closes [#82](https://github.com/joshrotenberg/redis_client_ex/issues/82)) ([#86](https://github.com/joshrotenberg/redis_client_ex/issues/86)) ([3c5e04f](https://github.com/joshrotenberg/redis_client_ex/commit/3c5e04f773ad3b4f3728cc4fcf3363fe446de8e7))
+
+
+### Bug Fixes
+
+* treat empty string env vars as unset in test_helper ([#93](https://github.com/joshrotenberg/redis_client_ex/issues/93)) ([1f34209](https://github.com/joshrotenberg/redis_client_ex/commit/1f342099ac6c0fe1fdf32c6be57fab189b1eaddd))
+* unwrap RESP3 verbatim strings to plain strings at decode time ([#80](https://github.com/joshrotenberg/redis_client_ex/issues/80)) ([a786de7](https://github.com/joshrotenberg/redis_client_ex/commit/a786de79afe1cdf08293433c9da58336d3f26eaa))
+
+
+### Performance Improvements
+
+* optimize RESP3 decoder + add protocol benchmarks ([#78](https://github.com/joshrotenberg/redis_client_ex/issues/78)) ([2cdbce3](https://github.com/joshrotenberg/redis_client_ex/commit/2cdbce3ee916e3c9105df6e07b9a06c53e35c86a))
+
 ## [0.4.0](https://github.com/joshrotenberg/redis_client_ex/compare/v0.3.0...v0.4.0) (2026-04-02)
 
 
