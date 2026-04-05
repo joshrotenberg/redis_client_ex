@@ -30,6 +30,10 @@ defmodule Redis.Cache do
       # Next call: cache miss again
       {:ok, "newval"} = Redis.Cache.get(cache, "foo")
 
+      # Generic cached command — any allowlisted command works
+      {:ok, 3} = Redis.Cache.cached_command(cache, ["LLEN", "mylist"])
+      {:ok, ["a", "b"]} = Redis.Cache.cached_command(cache, ["LRANGE", "mylist", "0", "1"])
+
       # Stats
       Redis.Cache.stats(cache)
       #=> %{hits: 1, misses: 2, evictions: 1, ...}
@@ -42,11 +46,16 @@ defmodule Redis.Cache do
     * `:max_entries` - maximum number of cached entries (default: 10,000, 0 for unlimited)
     * `:eviction_policy` - `:lru` or `:fifo` (default: `:lru`)
     * `:sweep_interval` - ms between expired-entry sweeps (default: 60,000, nil to disable)
+    * `:cacheable` - controls which commands are cached (default: `:default`).
+      Accepts `:default` (built-in allowlist), a list of command entries
+      (e.g. `["GET", {"LRANGE", ttl: 5_000}]`), or a function
+      `([String.t()] -> boolean | {:ok, ttl})`.
     * `:name` - GenServer name
   """
 
   use GenServer
 
+  alias Redis.Cache.Allowlist
   alias Redis.Cache.Store
   alias Redis.Connection
 
@@ -59,6 +68,7 @@ defmodule Redis.Cache do
     :store,
     :ttl,
     :sweep_interval,
+    :cacheable,
     optin: false
   ]
 
@@ -84,6 +94,22 @@ defmodule Redis.Cache do
   @doc "HGETALL with caching."
   @spec hgetall(GenServer.server(), String.t()) :: {:ok, term()} | {:error, term()}
   def hgetall(cache, key), do: GenServer.call(cache, {:cached_hgetall, key})
+
+  @doc """
+  Executes a command with caching if it is in the allowlist.
+
+  For allowlisted commands, results are cached locally and served from
+  cache on subsequent calls with the same arguments. The cache key is
+  derived from the full command arguments, and invalidation is tracked
+  by the Redis key (first argument after the command name).
+
+  Non-allowlisted commands are passed through to Redis without caching.
+
+      {:ok, 3} = Redis.Cache.cached_command(cache, ["LLEN", "mylist"])
+      {:ok, ["a", "b"]} = Redis.Cache.cached_command(cache, ["LRANGE", "mylist", "0", "1"])
+  """
+  @spec cached_command(GenServer.server(), [String.t()]) :: {:ok, term()} | {:error, term()}
+  def cached_command(cache, args), do: GenServer.call(cache, {:cached_command, args})
 
   @doc "Sends a command through the underlying connection (not cached)."
   @spec command(GenServer.server(), [String.t()]) :: {:ok, term()} | {:error, term()}
@@ -114,6 +140,7 @@ defmodule Redis.Cache do
     {max_entries, opts} = Keyword.pop(opts, :max_entries, 10_000)
     {eviction_policy, opts} = Keyword.pop(opts, :eviction_policy, :lru)
     {sweep_interval, opts} = Keyword.pop(opts, :sweep_interval, @default_sweep_interval)
+    {cacheable, opts} = Keyword.pop(opts, :cacheable, :default)
 
     # Tell the connection to forward push messages to us
     conn_opts = Keyword.put(opts, :push_receiver, self())
@@ -137,7 +164,8 @@ defmodule Redis.Cache do
               store: store,
               ttl: ttl,
               optin: optin,
-              sweep_interval: sweep_interval
+              sweep_interval: sweep_interval,
+              cacheable: Allowlist.normalize(cacheable)
             }
 
             schedule_sweep(sweep_interval)
@@ -212,6 +240,22 @@ defmodule Redis.Cache do
     end
   end
 
+  def handle_call({:cached_command, [cmd | _] = args}, _from, state) do
+    case Allowlist.check(state.cacheable, args) do
+      {:ok, cmd_ttl} ->
+        handle_generic_cached(args, cmd_ttl, state)
+
+      :nocache ->
+        result = Connection.command(state.conn, args)
+
+        Logger.debug(
+          "Redis.Cache: command #{cmd} not in allowlist, passing through without caching"
+        )
+
+        {:reply, result, state}
+    end
+  end
+
   def handle_call({:command, args}, _from, state) do
     {:reply, Connection.command(state.conn, args), state}
   end
@@ -228,6 +272,7 @@ defmodule Redis.Cache do
   def handle_info({:redis_push, :invalidate, keys}, state) do
     store = Store.invalidate(state.store, keys)
     store = invalidate_hgetall_refs(store, keys)
+    store = Store.invalidate_refs(store, keys)
     {:noreply, %{state | store: store}}
   end
 
@@ -266,6 +311,26 @@ defmodule Redis.Cache do
   # -------------------------------------------------------------------
   # Helpers
   # -------------------------------------------------------------------
+
+  defp handle_generic_cached([_cmd, redis_key | _] = args, cmd_ttl, state) do
+    cache_key = List.to_tuple(args)
+    ttl = cmd_ttl || state.ttl
+
+    case Store.get(state.store, cache_key) do
+      {:hit, value, store} ->
+        {:reply, {:ok, value}, %{state | store: store}}
+
+      {:miss, store} ->
+        case Connection.command(state.conn, args) do
+          {:ok, value} ->
+            store = Store.put_with_ref(store, cache_key, redis_key, value, ttl)
+            {:reply, {:ok, value}, %{state | store: store}}
+
+          error ->
+            {:reply, error, %{state | store: store}}
+        end
+    end
+  end
 
   # In OPTIN mode, pipeline returns [caching_ok, actual_result]
   defp normalize_optin_result({:ok, [_caching, value]}, true), do: {:ok, value}

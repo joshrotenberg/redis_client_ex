@@ -15,6 +15,7 @@ defmodule Redis.Cache.Store do
   defstruct [
     :table,
     :index_table,
+    :refs_table,
     max_entries: 10_000,
     eviction_policy: :lru,
     hits: 0,
@@ -28,6 +29,7 @@ defmodule Redis.Cache.Store do
   @type t :: %__MODULE__{
           table: :ets.tid(),
           index_table: :ets.tid(),
+          refs_table: :ets.tid(),
           max_entries: non_neg_integer(),
           eviction_policy: eviction_policy(),
           hits: non_neg_integer(),
@@ -45,10 +47,13 @@ defmodule Redis.Cache.Store do
     table = :ets.new(name, [:set, :public, read_concurrency: true])
     index_name = :"#{name}_index"
     index_table = :ets.new(index_name, [:ordered_set, :public])
+    refs_name = :"#{name}_refs"
+    refs_table = :ets.new(refs_name, [:bag, :public])
 
     %__MODULE__{
       table: table,
       index_table: index_table,
+      refs_table: refs_table,
       max_entries: max_entries,
       eviction_policy: eviction_policy
     }
@@ -93,12 +98,44 @@ defmodule Redis.Cache.Store do
     %{store | stores: store.stores + 1}
   end
 
+  @doc """
+  Puts a value in the cache and records a ref from `redis_key` to `cache_key`.
+
+  When `redis_key` is later invalidated via `invalidate_refs/2`, all cache
+  entries that reference it are removed.
+  """
+  @spec put_with_ref(t(), term(), String.t(), term(), non_neg_integer() | nil) :: t()
+  def put_with_ref(%__MODULE__{} = store, cache_key, redis_key, value, ttl_ms \\ nil) do
+    store = put(store, cache_key, value, ttl_ms)
+    :ets.insert(store.refs_table, {redis_key, cache_key})
+    store
+  end
+
+  @doc """
+  Invalidates all cache entries that reference the given Redis key(s).
+
+  Looks up the refs table to find cache keys that depend on each Redis key,
+  invalidates them, and cleans up the ref entries.
+  """
+  @spec invalidate_refs(t(), [String.t()] | nil) :: t()
+  def invalidate_refs(%__MODULE__{} = store, nil), do: store
+
+  def invalidate_refs(%__MODULE__{} = store, keys) when is_list(keys) do
+    Enum.reduce(keys, store, fn redis_key, st ->
+      refs = :ets.lookup(st.refs_table, redis_key)
+      st = invalidate_cache_keys(st, refs)
+      :ets.delete(st.refs_table, redis_key)
+      st
+    end)
+  end
+
   @doc "Invalidates one or more keys. Called when Redis pushes invalidation."
   @spec invalidate(t(), [String.t()] | nil) :: t()
   def invalidate(%__MODULE__{} = store, nil) do
     count = :ets.info(store.table, :size)
     :ets.delete_all_objects(store.table)
     :ets.delete_all_objects(store.index_table)
+    :ets.delete_all_objects(store.refs_table)
     %{store | evictions: store.evictions + count}
   end
 
@@ -159,20 +196,35 @@ defmodule Redis.Cache.Store do
   def flush(%__MODULE__{} = store) do
     :ets.delete_all_objects(store.table)
     :ets.delete_all_objects(store.index_table)
+    :ets.delete_all_objects(store.refs_table)
     store
   end
 
   @doc "Destroys the cache store (deletes the ETS tables)."
   @spec destroy(t()) :: :ok
-  def destroy(%__MODULE__{table: table, index_table: index_table}) do
+  def destroy(%__MODULE__{table: table, index_table: index_table, refs_table: refs_table}) do
     :ets.delete(table)
     :ets.delete(index_table)
+    :ets.delete(refs_table)
     :ok
   end
 
   # -------------------------------------------------------------------
   # Private helpers
   # -------------------------------------------------------------------
+
+  defp invalidate_cache_keys(store, refs) do
+    Enum.reduce(refs, store, fn {_redis_key, cache_key}, st ->
+      case :ets.lookup(st.table, cache_key) do
+        [{^cache_key, _, _, timestamp}] ->
+          delete_entry(st, cache_key, timestamp)
+          %{st | evictions: st.evictions + 1}
+
+        [] ->
+          st
+      end
+    end)
+  end
 
   defp expired?(nil), do: false
   defp expired?(expires_at), do: System.monotonic_time(:millisecond) > expires_at
