@@ -14,7 +14,7 @@ RESP3 native. Cluster-aware. Client-side caching. Resilience built in. Zero requ
 ```elixir
 def deps do
   [
-    {:redis_client_ex, "~> 0.5"}
+    {:redis_client_ex, "~> 0.6"}
   ]
 end
 ```
