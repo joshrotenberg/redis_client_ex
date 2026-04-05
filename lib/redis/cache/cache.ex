@@ -2,35 +2,35 @@ defmodule Redis.Cache do
   @moduledoc """
   Client-side caching using RESP3 server-assisted invalidation.
 
-  Wraps a `Redis.Connection` and caches read command results in an ETS table.
-  The Redis server tracks which keys this client has read and pushes invalidation
-  messages when those keys are modified by any client.
+  Wraps a `Redis.Connection` and caches read command results locally.
+  The Redis server tracks which keys this client has read and pushes
+  invalidation messages when those keys are modified by any client.
 
   ## How It Works
 
   1. On start, sends `CLIENT TRACKING ON` to enable server-assisted tracking
-  2. Read commands (GET, MGET, HGETALL, etc.) check ETS first
+  2. Read commands (GET, MGET, HGETALL, etc.) check the local cache first
   3. Cache misses go to Redis — response is cached before returning
   4. When any client modifies a cached key, Redis pushes an `invalidate` message
   5. The push arrives as `{:redis_push, :invalidate, keys}` from Connection
-  6. Cache evicts those keys from ETS
+  6. Cache evicts those keys locally
   7. Next read goes to Redis again
 
   ## Usage
 
       {:ok, cache} = Redis.Cache.start_link(port: 6379)
 
-      # First call: cache miss → hits Redis
+      # First call: cache miss -> hits Redis
       {:ok, "bar"} = Redis.Cache.get(cache, "foo")
 
-      # Second call: cache hit → served from ETS
+      # Second call: cache hit -> served locally
       {:ok, "bar"} = Redis.Cache.get(cache, "foo")
 
-      # Another client does SET foo newval → invalidation push → ETS evicted
+      # Another client does SET foo newval -> invalidation push -> evicted
       # Next call: cache miss again
       {:ok, "newval"} = Redis.Cache.get(cache, "foo")
 
-      # Generic cached command — any allowlisted command works
+      # Generic cached command -- any allowlisted command works
       {:ok, 3} = Redis.Cache.cached_command(cache, ["LLEN", "mylist"])
       {:ok, ["a", "b"]} = Redis.Cache.cached_command(cache, ["LRANGE", "mylist", "0", "1"])
 
@@ -50,6 +50,8 @@ defmodule Redis.Cache do
       Accepts `:default` (built-in allowlist), a list of command entries
       (e.g. `["GET", {"LRANGE", ttl: 5_000}]`), or a function
       `([String.t()] -> boolean | {:ok, ttl})`.
+    * `:backend` - module implementing `Redis.Cache.Backend` (default: `Redis.Cache.Store`)
+    * `:backend_opts` - additional keyword list passed to `backend.init/1`
     * `:name` - GenServer name
   """
 
@@ -66,6 +68,7 @@ defmodule Redis.Cache do
   defstruct [
     :conn,
     :store,
+    :backend,
     :ttl,
     :sweep_interval,
     :cacheable,
@@ -141,6 +144,8 @@ defmodule Redis.Cache do
     {eviction_policy, opts} = Keyword.pop(opts, :eviction_policy, :lru)
     {sweep_interval, opts} = Keyword.pop(opts, :sweep_interval, @default_sweep_interval)
     {cacheable, opts} = Keyword.pop(opts, :cacheable, :default)
+    {backend, opts} = Keyword.pop(opts, :backend, Store)
+    {backend_opts, opts} = Keyword.pop(opts, :backend_opts, [])
 
     # Tell the connection to forward push messages to us
     conn_opts = Keyword.put(opts, :push_receiver, self())
@@ -151,31 +156,20 @@ defmodule Redis.Cache do
         tracking_args = ["CLIENT", "TRACKING", "ON"]
         tracking_args = if optin, do: tracking_args ++ ["OPTIN"], else: tracking_args
 
-        case Connection.command(conn, tracking_args) do
-          {:ok, "OK"} ->
-            store =
-              Store.new(:redis_ex_cache,
-                max_entries: max_entries,
-                eviction_policy: eviction_policy
-              )
+        store_opts =
+          [max_entries: max_entries, eviction_policy: eviction_policy] ++ backend_opts
 
-            state = %__MODULE__{
-              conn: conn,
-              store: store,
-              ttl: ttl,
-              optin: optin,
-              sweep_interval: sweep_interval,
-              cacheable: Allowlist.normalize(cacheable)
-            }
+        init_opts = %{
+          conn: conn,
+          backend: backend,
+          store_opts: store_opts,
+          ttl: ttl,
+          optin: optin,
+          sweep_interval: sweep_interval,
+          cacheable: cacheable
+        }
 
-            schedule_sweep(sweep_interval)
-
-            {:ok, state}
-
-          {:error, reason} ->
-            Connection.stop(conn)
-            {:stop, {:tracking_failed, reason}}
-        end
+        init_tracking_and_store(conn, tracking_args, init_opts)
 
       {:error, reason} ->
         {:stop, reason}
@@ -184,7 +178,9 @@ defmodule Redis.Cache do
 
   @impl true
   def handle_call({:cached_get, key}, _from, state) do
-    case Store.get(state.store, key) do
+    %{backend: backend} = state
+
+    case backend.get(state.store, key) do
       {:hit, value, store} ->
         {:reply, {:ok, value}, %{state | store: store}}
 
@@ -199,7 +195,7 @@ defmodule Redis.Cache do
 
         case normalize_optin_result(result, state.optin) do
           {:ok, value} ->
-            store = Store.put(store, key, value, state.ttl)
+            store = backend.put(store, key, value, state.ttl)
             {:reply, {:ok, value}, %{state | store: store}}
 
           error ->
@@ -209,7 +205,7 @@ defmodule Redis.Cache do
   end
 
   def handle_call({:cached_mget, keys}, _from, state) do
-    {cached, missed_keys, missed_indices, store} = check_cache_for_keys(keys, state.store)
+    {cached, missed_keys, missed_indices, store} = check_cache_for_keys(keys, state)
 
     if missed_keys == [] do
       values = Enum.map(0..(length(keys) - 1), &Map.get(cached, &1))
@@ -220,18 +216,19 @@ defmodule Redis.Cache do
   end
 
   def handle_call({:cached_hgetall, key}, _from, state) do
+    %{backend: backend} = state
     cache_key = {:hgetall, key}
 
-    case Store.get(state.store, cache_key) do
+    case backend.get(state.store, cache_key) do
       {:hit, value, store} ->
         {:reply, {:ok, value}, %{state | store: store}}
 
       {:miss, store} ->
         case Connection.command(state.conn, ["HGETALL", key]) do
           {:ok, value} ->
-            store = Store.put(store, cache_key, value, state.ttl)
+            store = backend.put(store, cache_key, value, state.ttl)
             # Also track by the raw key for invalidation
-            store = Store.put(store, key, {:hgetall_ref, cache_key}, state.ttl)
+            store = backend.put(store, key, {:hgetall_ref, cache_key}, state.ttl)
             {:reply, {:ok, value}, %{state | store: store}}
 
           error ->
@@ -261,23 +258,24 @@ defmodule Redis.Cache do
   end
 
   def handle_call(:stats, _from, state) do
-    {:reply, Store.stats(state.store), state}
+    {:reply, state.backend.stats(state.store), state}
   end
 
   def handle_call(:flush, _from, state) do
-    {:reply, :ok, %{state | store: Store.flush(state.store)}}
+    {:reply, :ok, %{state | store: state.backend.flush(state.store)}}
   end
 
   @impl true
   def handle_info({:redis_push, :invalidate, keys}, state) do
-    store = Store.invalidate(state.store, keys)
-    store = invalidate_hgetall_refs(store, keys)
-    store = Store.invalidate_refs(store, keys)
+    %{backend: backend} = state
+    store = backend.invalidate(state.store, keys)
+    store = invalidate_hgetall_refs(store, keys, state)
+    store = backend.invalidate_refs(store, keys)
     {:noreply, %{state | store: store}}
   end
 
   def handle_info(:sweep, state) do
-    store = Store.sweep_expired(state.store)
+    store = state.backend.sweep_expired(state.store)
     schedule_sweep(state.sweep_interval)
     {:noreply, %{state | store: store}}
   end
@@ -299,7 +297,7 @@ defmodule Redis.Cache do
       :exit, _ -> :ok
     end
 
-    Store.destroy(state.store)
+    state.backend.destroy(state.store)
 
     try do
       Connection.stop(state.conn)
@@ -312,18 +310,48 @@ defmodule Redis.Cache do
   # Helpers
   # -------------------------------------------------------------------
 
+  defp init_tracking_and_store(conn, tracking_args, opts) do
+    case Connection.command(conn, tracking_args) do
+      {:ok, "OK"} ->
+        case opts.backend.init(opts.store_opts) do
+          {:ok, store} ->
+            state = %__MODULE__{
+              conn: conn,
+              store: store,
+              backend: opts.backend,
+              ttl: opts.ttl,
+              optin: opts.optin,
+              sweep_interval: opts.sweep_interval,
+              cacheable: Allowlist.normalize(opts.cacheable)
+            }
+
+            schedule_sweep(opts.sweep_interval)
+            {:ok, state}
+
+          {:error, reason} ->
+            Connection.stop(conn)
+            {:stop, {:backend_init_failed, reason}}
+        end
+
+      {:error, reason} ->
+        Connection.stop(conn)
+        {:stop, {:tracking_failed, reason}}
+    end
+  end
+
   defp handle_generic_cached([_cmd, redis_key | _] = args, cmd_ttl, state) do
+    %{backend: backend} = state
     cache_key = List.to_tuple(args)
     ttl = cmd_ttl || state.ttl
 
-    case Store.get(state.store, cache_key) do
+    case backend.get(state.store, cache_key) do
       {:hit, value, store} ->
         {:reply, {:ok, value}, %{state | store: store}}
 
       {:miss, store} ->
         case Connection.command(state.conn, args) do
           {:ok, value} ->
-            store = Store.put_with_ref(store, cache_key, redis_key, value, ttl)
+            store = backend.put_with_ref(store, cache_key, redis_key, value, ttl)
             {:reply, {:ok, value}, %{state | store: store}}
 
           error ->
@@ -337,11 +365,13 @@ defmodule Redis.Cache do
   defp normalize_optin_result(result, false), do: result
   defp normalize_optin_result(error, _), do: error
 
-  defp check_cache_for_keys(keys, store) do
+  defp check_cache_for_keys(keys, state) do
+    %{backend: backend} = state
+
     keys
     |> Enum.with_index()
-    |> Enum.reduce({%{}, [], [], store}, fn {key, idx}, {cached, missed_k, missed_i, st} ->
-      case Store.get(st, key) do
+    |> Enum.reduce({%{}, [], [], state.store}, fn {key, idx}, {cached, missed_k, missed_i, st} ->
+      case backend.get(st, key) do
         {:hit, value, st} -> {Map.put(cached, idx, value), missed_k, missed_i, st}
         {:miss, st} -> {cached, [key | missed_k], [idx | missed_i], st}
       end
@@ -349,6 +379,7 @@ defmodule Redis.Cache do
   end
 
   defp fetch_and_merge_mget(keys, cached, missed_keys, missed_indices, store, state) do
+    %{backend: backend} = state
     missed_keys = Enum.reverse(missed_keys)
     missed_indices = Enum.reverse(missed_indices)
 
@@ -357,7 +388,7 @@ defmodule Redis.Cache do
         store =
           Enum.zip(missed_keys, fetched)
           |> Enum.reduce(store, fn {key, value}, st ->
-            Store.put(st, key, value, state.ttl)
+            backend.put(st, key, value, state.ttl)
           end)
 
         fetched_map = Enum.zip(missed_indices, fetched) |> Map.new()
@@ -371,13 +402,15 @@ defmodule Redis.Cache do
     end
   end
 
-  defp invalidate_hgetall_refs(store, nil), do: store
+  defp invalidate_hgetall_refs(store, nil, _state), do: store
 
-  defp invalidate_hgetall_refs(store, keys) do
+  defp invalidate_hgetall_refs(store, keys, state) do
+    %{backend: backend} = state
+
     Enum.reduce(keys, store, fn key, st ->
-      case :ets.lookup(st.table, key) do
-        [{^key, {:hgetall_ref, cache_key}, _, _}] ->
-          Store.invalidate(st, [cache_key])
+      case backend.get(st, key) do
+        {:hit, {:hgetall_ref, cache_key}, st} ->
+          backend.invalidate(st, [cache_key])
 
         _ ->
           st

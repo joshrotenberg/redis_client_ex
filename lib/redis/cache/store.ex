@@ -2,15 +2,17 @@ defmodule Redis.Cache.Store do
   @moduledoc """
   ETS-backed cache store for client-side caching.
 
-  Stores key -> value mappings with optional TTL, bounded size, and
-  configurable eviction policy. Tracks hits, misses, and evictions
-  for observability.
+  This is the default implementation of `Redis.Cache.Backend`. Stores
+  key -> value mappings with optional TTL, bounded size, and configurable
+  eviction policy. Tracks hits, misses, and evictions for observability.
 
   ## Options
 
     * `:max_entries` - maximum number of entries (default: `10_000`, `0` for unlimited)
     * `:eviction_policy` - `:lru` or `:fifo` (default: `:lru`)
   """
+
+  @behaviour Redis.Cache.Backend
 
   defstruct [
     :table,
@@ -38,6 +40,14 @@ defmodule Redis.Cache.Store do
           stores: non_neg_integer()
         }
 
+  @doc "Initializes the store from options. Implements `Redis.Cache.Backend.init/1`."
+  @impl true
+  @spec init(keyword()) :: {:ok, t()}
+  def init(opts) do
+    name = Keyword.get(opts, :name, :redis_ex_cache)
+    {:ok, new(name, opts)}
+  end
+
   @doc "Creates a new cache store backed by ETS tables."
   @spec new(atom(), keyword()) :: t()
   def new(name \\ :redis_ex_cache, opts \\ []) do
@@ -60,6 +70,7 @@ defmodule Redis.Cache.Store do
   end
 
   @doc "Gets a value from the cache. Returns `{:hit, value, store}` or `{:miss, store}`."
+  @impl true
   @spec get(t(), term()) :: {:hit, term(), t()} | {:miss, t()}
   def get(%__MODULE__{} = store, key) do
     case :ets.lookup(store.table, key) do
@@ -78,6 +89,7 @@ defmodule Redis.Cache.Store do
   end
 
   @doc "Puts a value in the cache with optional TTL in milliseconds."
+  @impl true
   @spec put(t(), term(), term(), non_neg_integer() | nil) :: t()
   def put(%__MODULE__{} = store, key, value, ttl_ms \\ nil) do
     expires_at =
@@ -104,6 +116,7 @@ defmodule Redis.Cache.Store do
   When `redis_key` is later invalidated via `invalidate_refs/2`, all cache
   entries that reference it are removed.
   """
+  @impl true
   @spec put_with_ref(t(), term(), String.t(), term(), non_neg_integer() | nil) :: t()
   def put_with_ref(%__MODULE__{} = store, cache_key, redis_key, value, ttl_ms \\ nil) do
     store = put(store, cache_key, value, ttl_ms)
@@ -117,6 +130,7 @@ defmodule Redis.Cache.Store do
   Looks up the refs table to find cache keys that depend on each Redis key,
   invalidates them, and cleans up the ref entries.
   """
+  @impl true
   @spec invalidate_refs(t(), [String.t()] | nil) :: t()
   def invalidate_refs(%__MODULE__{} = store, nil), do: store
 
@@ -130,6 +144,7 @@ defmodule Redis.Cache.Store do
   end
 
   @doc "Invalidates one or more keys. Called when Redis pushes invalidation."
+  @impl true
   @spec invalidate(t(), [String.t()] | nil) :: t()
   def invalidate(%__MODULE__{} = store, nil) do
     count = :ets.info(store.table, :size)
@@ -156,6 +171,7 @@ defmodule Redis.Cache.Store do
   end
 
   @doc "Returns cache statistics."
+  @impl true
   @spec stats(t()) :: map()
   def stats(%__MODULE__{} = store) do
     total = store.hits + store.misses
@@ -174,6 +190,7 @@ defmodule Redis.Cache.Store do
   end
 
   @doc "Removes expired entries from the cache."
+  @impl true
   @spec sweep_expired(t()) :: t()
   def sweep_expired(%__MODULE__{} = store) do
     now = System.monotonic_time(:millisecond)
@@ -192,6 +209,7 @@ defmodule Redis.Cache.Store do
   end
 
   @doc "Clears the entire cache."
+  @impl true
   @spec flush(t()) :: t()
   def flush(%__MODULE__{} = store) do
     :ets.delete_all_objects(store.table)
@@ -201,6 +219,7 @@ defmodule Redis.Cache.Store do
   end
 
   @doc "Destroys the cache store (deletes the ETS tables)."
+  @impl true
   @spec destroy(t()) :: :ok
   def destroy(%__MODULE__{table: table, index_table: index_table, refs_table: refs_table}) do
     :ets.delete(table)
