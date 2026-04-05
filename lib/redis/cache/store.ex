@@ -2,36 +2,68 @@ defmodule Redis.Cache.Store do
   @moduledoc """
   ETS-backed cache store for client-side caching.
 
-  Stores key → value mappings with optional TTL. Tracks hits, misses,
-  and evictions for observability.
+  Stores key -> value mappings with optional TTL, bounded size, and
+  configurable eviction policy. Tracks hits, misses, and evictions
+  for observability.
+
+  ## Options
+
+    * `:max_entries` - maximum number of entries (default: `10_000`, `0` for unlimited)
+    * `:eviction_policy` - `:lru` or `:fifo` (default: `:lru`)
   """
 
-  defstruct [:table, hits: 0, misses: 0, evictions: 0, stores: 0]
+  defstruct [
+    :table,
+    :index_table,
+    max_entries: 10_000,
+    eviction_policy: :lru,
+    hits: 0,
+    misses: 0,
+    evictions: 0,
+    stores: 0
+  ]
+
+  @type eviction_policy :: :lru | :fifo
 
   @type t :: %__MODULE__{
           table: :ets.tid(),
+          index_table: :ets.tid(),
+          max_entries: non_neg_integer(),
+          eviction_policy: eviction_policy(),
           hits: non_neg_integer(),
           misses: non_neg_integer(),
           evictions: non_neg_integer(),
           stores: non_neg_integer()
         }
 
-  @doc "Creates a new cache store backed by an ETS table."
-  @spec new(atom()) :: t()
-  def new(name \\ :redis_ex_cache) do
+  @doc "Creates a new cache store backed by ETS tables."
+  @spec new(atom(), keyword()) :: t()
+  def new(name \\ :redis_ex_cache, opts \\ []) do
+    max_entries = Keyword.get(opts, :max_entries, 10_000)
+    eviction_policy = Keyword.get(opts, :eviction_policy, :lru)
+
     table = :ets.new(name, [:set, :public, read_concurrency: true])
-    %__MODULE__{table: table}
+    index_name = :"#{name}_index"
+    index_table = :ets.new(index_name, [:ordered_set, :public])
+
+    %__MODULE__{
+      table: table,
+      index_table: index_table,
+      max_entries: max_entries,
+      eviction_policy: eviction_policy
+    }
   end
 
   @doc "Gets a value from the cache. Returns `{:hit, value, store}` or `{:miss, store}`."
   @spec get(t(), term()) :: {:hit, term(), t()} | {:miss, t()}
   def get(%__MODULE__{} = store, key) do
     case :ets.lookup(store.table, key) do
-      [{^key, value, expires_at}] ->
+      [{^key, value, expires_at, timestamp}] ->
         if expired?(expires_at) do
-          :ets.delete(store.table, key)
+          delete_entry(store, key, timestamp)
           {:miss, %{store | misses: store.misses + 1, evictions: store.evictions + 1}}
         else
+          store = maybe_touch_lru(store, key, timestamp)
           {:hit, value, %{store | hits: store.hits + 1}}
         end
 
@@ -46,20 +78,27 @@ defmodule Redis.Cache.Store do
     expires_at =
       if ttl_ms do
         System.monotonic_time(:millisecond) + ttl_ms
-      else
-        nil
       end
 
-    :ets.insert(store.table, {key, value, expires_at})
+    # Remove old index entry if key already exists
+    store = remove_old_index(store, key)
+
+    # Evict if at capacity
+    store = maybe_evict(store)
+
+    timestamp = System.unique_integer([:monotonic])
+    :ets.insert(store.table, {key, value, expires_at, timestamp})
+    :ets.insert(store.index_table, {timestamp, key})
+
     %{store | stores: store.stores + 1}
   end
 
   @doc "Invalidates one or more keys. Called when Redis pushes invalidation."
   @spec invalidate(t(), [String.t()] | nil) :: t()
   def invalidate(%__MODULE__{} = store, nil) do
-    # nil means flush all (server sent invalidate with nil key list)
     count = :ets.info(store.table, :size)
     :ets.delete_all_objects(store.table)
+    :ets.delete_all_objects(store.index_table)
     %{store | evictions: store.evictions + count}
   end
 
@@ -67,8 +106,8 @@ defmodule Redis.Cache.Store do
     evicted =
       Enum.count(keys, fn key ->
         case :ets.lookup(store.table, key) do
-          [{^key, _, _}] ->
-            :ets.delete(store.table, key)
+          [{^key, _, _, timestamp}] ->
+            delete_entry(store, key, timestamp)
             true
 
           [] ->
@@ -91,24 +130,98 @@ defmodule Redis.Cache.Store do
       evictions: store.evictions,
       stores: store.stores,
       size: :ets.info(store.table, :size),
-      hit_rate: hit_rate
+      hit_rate: hit_rate,
+      max_entries: store.max_entries,
+      eviction_policy: store.eviction_policy
     }
+  end
+
+  @doc "Removes expired entries from the cache."
+  @spec sweep_expired(t()) :: t()
+  def sweep_expired(%__MODULE__{} = store) do
+    now = System.monotonic_time(:millisecond)
+
+    expired =
+      :ets.select(store.table, [
+        {{:"$1", :_, :"$2", :"$3"}, [{:"/=", :"$2", nil}, {:<, :"$2", now}], [{{:"$1", :"$3"}}]}
+      ])
+
+    Enum.each(expired, fn {key, timestamp} ->
+      delete_entry(store, key, timestamp)
+    end)
+
+    evicted = length(expired)
+    %{store | evictions: store.evictions + evicted}
   end
 
   @doc "Clears the entire cache."
   @spec flush(t()) :: t()
   def flush(%__MODULE__{} = store) do
     :ets.delete_all_objects(store.table)
+    :ets.delete_all_objects(store.index_table)
     store
   end
 
-  @doc "Destroys the cache store (deletes the ETS table)."
+  @doc "Destroys the cache store (deletes the ETS tables)."
   @spec destroy(t()) :: :ok
-  def destroy(%__MODULE__{table: table}) do
+  def destroy(%__MODULE__{table: table, index_table: index_table}) do
     :ets.delete(table)
+    :ets.delete(index_table)
     :ok
   end
 
+  # -------------------------------------------------------------------
+  # Private helpers
+  # -------------------------------------------------------------------
+
   defp expired?(nil), do: false
   defp expired?(expires_at), do: System.monotonic_time(:millisecond) > expires_at
+
+  defp delete_entry(store, key, timestamp) do
+    :ets.delete(store.table, key)
+    :ets.delete(store.index_table, timestamp)
+  end
+
+  defp remove_old_index(store, key) do
+    case :ets.lookup(store.table, key) do
+      [{^key, _, _, old_timestamp}] ->
+        :ets.delete(store.index_table, old_timestamp)
+        store
+
+      [] ->
+        store
+    end
+  end
+
+  defp maybe_touch_lru(%{eviction_policy: :lru} = store, key, old_timestamp) do
+    :ets.delete(store.index_table, old_timestamp)
+    new_timestamp = System.unique_integer([:monotonic])
+    :ets.insert(store.index_table, {new_timestamp, key})
+    :ets.update_element(store.table, key, {4, new_timestamp})
+    store
+  end
+
+  defp maybe_touch_lru(store, _key, _timestamp), do: store
+
+  defp maybe_evict(%{max_entries: 0} = store), do: store
+
+  defp maybe_evict(%{max_entries: max} = store) do
+    if :ets.info(store.table, :size) >= max do
+      evict_one(store)
+    else
+      store
+    end
+  end
+
+  defp evict_one(store) do
+    case :ets.first(store.index_table) do
+      :"$end_of_table" ->
+        store
+
+      timestamp ->
+        [{^timestamp, key}] = :ets.lookup(store.index_table, timestamp)
+        delete_entry(store, key, timestamp)
+        %{store | evictions: store.evictions + 1}
+    end
+  end
 end
