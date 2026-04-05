@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.0](https://github.com/joshrotenberg/redis_client_ex/compare/v0.5.0...v0.6.0) (2026-04-05)
+
+
+### Features
+
+* add cacheable command allowlist with per-command TTL override ([#99](https://github.com/joshrotenberg/redis_client_ex/issues/99)) ([c0d0ddc](https://github.com/joshrotenberg/redis_client_ex/commit/c0d0ddc8ea161b0e6754b6bf4c54044e41008cd2)), closes [#95](https://github.com/joshrotenberg/redis_client_ex/issues/95)
+* add max size, eviction policy, and background sweep to client-side cache ([#97](https://github.com/joshrotenberg/redis_client_ex/issues/97)) ([4aa5ec9](https://github.com/joshrotenberg/redis_client_ex/commit/4aa5ec97b263b362b6305fd6d67da1ce4b46538a)), closes [#94](https://github.com/joshrotenberg/redis_client_ex/issues/94)
+* add pluggable cache backend via behaviour ([#100](https://github.com/joshrotenberg/redis_client_ex/issues/100)) ([7d6fdc8](https://github.com/joshrotenberg/redis_client_ex/commit/7d6fdc87860ca1a17fdba4fafade80eac18c631c)), closes [#96](https://github.com/joshrotenberg/redis_client_ex/issues/96)
+
 ## [0.5.0](https://github.com/joshrotenberg/redis_client_ex/compare/v0.4.0...v0.5.0) (2026-04-04)
 
 
