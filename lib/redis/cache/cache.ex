@@ -39,6 +39,9 @@ defmodule Redis.Cache do
     * All `Redis.Connection` options (host, port, password, etc.)
     * `:ttl` - local TTL in ms for cached entries (default: nil, rely on server invalidation)
     * `:optin` - if true, only cache commands prefixed with CACHING YES (default: false)
+    * `:max_entries` - maximum number of cached entries (default: 10,000, 0 for unlimited)
+    * `:eviction_policy` - `:lru` or `:fifo` (default: `:lru`)
+    * `:sweep_interval` - ms between expired-entry sweeps (default: 60,000, nil to disable)
     * `:name` - GenServer name
   """
 
@@ -49,10 +52,13 @@ defmodule Redis.Cache do
 
   require Logger
 
+  @default_sweep_interval 60_000
+
   defstruct [
     :conn,
     :store,
     :ttl,
+    :sweep_interval,
     optin: false
   ]
 
@@ -105,6 +111,9 @@ defmodule Redis.Cache do
 
     {ttl, opts} = Keyword.pop(opts, :ttl)
     {optin, opts} = Keyword.pop(opts, :optin, false)
+    {max_entries, opts} = Keyword.pop(opts, :max_entries, 10_000)
+    {eviction_policy, opts} = Keyword.pop(opts, :eviction_policy, :lru)
+    {sweep_interval, opts} = Keyword.pop(opts, :sweep_interval, @default_sweep_interval)
 
     # Tell the connection to forward push messages to us
     conn_opts = Keyword.put(opts, :push_receiver, self())
@@ -117,14 +126,21 @@ defmodule Redis.Cache do
 
         case Connection.command(conn, tracking_args) do
           {:ok, "OK"} ->
-            store = Store.new()
+            store =
+              Store.new(:redis_ex_cache,
+                max_entries: max_entries,
+                eviction_policy: eviction_policy
+              )
 
             state = %__MODULE__{
               conn: conn,
               store: store,
               ttl: ttl,
-              optin: optin
+              optin: optin,
+              sweep_interval: sweep_interval
             }
+
+            schedule_sweep(sweep_interval)
 
             {:ok, state}
 
@@ -215,6 +231,12 @@ defmodule Redis.Cache do
     {:noreply, %{state | store: store}}
   end
 
+  def handle_info(:sweep, state) do
+    store = Store.sweep_expired(state.store)
+    schedule_sweep(state.sweep_interval)
+    {:noreply, %{state | store: store}}
+  end
+
   def handle_info({:EXIT, _pid, _reason}, state) do
     {:noreply, state}
   end
@@ -289,7 +311,7 @@ defmodule Redis.Cache do
   defp invalidate_hgetall_refs(store, keys) do
     Enum.reduce(keys, store, fn key, st ->
       case :ets.lookup(st.table, key) do
-        [{^key, {:hgetall_ref, cache_key}, _}] ->
+        [{^key, {:hgetall_ref, cache_key}, _, _}] ->
           Store.invalidate(st, [cache_key])
 
         _ ->
@@ -297,4 +319,11 @@ defmodule Redis.Cache do
       end
     end)
   end
+
+  defp schedule_sweep(nil), do: :ok
+
+  defp schedule_sweep(interval) when interval > 0,
+    do: Process.send_after(self(), :sweep, interval)
+
+  defp schedule_sweep(_), do: :ok
 end
