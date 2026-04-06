@@ -22,6 +22,9 @@ defmodule Redis.Connection do
     * `:protocol` - `:resp3` or `:resp2` (default: `:resp3`)
     * `:client_name` - CLIENT SETNAME value
     * `:timeout` - command timeout ms (default: 5_000)
+    * `:credential_provider` - `{module, opts}` implementing `Redis.CredentialProvider`
+      for dynamic/rotating credentials (e.g., cloud IAM tokens).
+      When set, `:password` and `:username` are ignored.
     * `:exit_on_disconnection` - exit instead of reconnecting (default: false)
     * `:hibernate_after` - idle ms before hibernation (default: nil)
 
@@ -52,6 +55,7 @@ defmodule Redis.Connection do
     :backoff_current,
     :timeout,
     :push_receiver,
+    :credential_provider,
     protocol: :resp3,
     state: :disconnected,
     exit_on_disconnection: false,
@@ -245,7 +249,10 @@ defmodule Redis.Connection do
   def init(opts) do
     Process.flag(:trap_exit, true)
 
-    # Resolve MFA password at init time
+    # Build credential provider from explicit option or legacy password/username
+    credential_provider = build_credential_provider(opts)
+
+    # Resolve MFA password at init time (used when no credential provider)
     password = resolve_password(Keyword.get(opts, :password))
 
     state = %__MODULE__{
@@ -264,7 +271,8 @@ defmodule Redis.Connection do
       backoff_current: Keyword.get(opts, :backoff_initial, 500),
       timeout: Keyword.get(opts, :timeout, 5_000),
       exit_on_disconnection: Keyword.get(opts, :exit_on_disconnection, false),
-      push_receiver: Keyword.get(opts, :push_receiver)
+      push_receiver: Keyword.get(opts, :push_receiver),
+      credential_provider: credential_provider
     }
 
     sync = Keyword.get(opts, :sync_connect, true)
@@ -475,7 +483,8 @@ defmodule Redis.Connection do
   end
 
   defp handshake(state) do
-    with {:ok, state} <- negotiate_protocol(state),
+    with {:ok, state} <- fetch_credentials(state),
+         {:ok, state} <- negotiate_protocol(state),
          {:ok, state} <- maybe_auth(state),
          {:ok, state} <- maybe_select(state),
          {:ok, state} <- maybe_set_client_name(state) do
@@ -605,6 +614,40 @@ defmodule Redis.Connection do
           {:ok, data} -> recv_response(state, buffer <> data)
           {:error, reason} -> {:error, reason}
         end
+    end
+  end
+
+  # -------------------------------------------------------------------
+  # Credential provider
+  # -------------------------------------------------------------------
+
+  defp build_credential_provider(opts) do
+    case Keyword.get(opts, :credential_provider) do
+      {mod, provider_opts} ->
+        {mod, provider_opts}
+
+      nil ->
+        password = Keyword.get(opts, :password)
+        username = Keyword.get(opts, :username)
+
+        if password do
+          resolved = resolve_password(password)
+          {Redis.CredentialProvider.Static, [password: resolved, username: username]}
+        else
+          nil
+        end
+    end
+  end
+
+  defp fetch_credentials(%{credential_provider: nil} = state), do: {:ok, state}
+
+  defp fetch_credentials(%{credential_provider: {mod, opts}} = state) do
+    case mod.get_credentials(opts) do
+      {:ok, %{username: username, password: password}} ->
+        {:ok, %{state | username: username, password: password}}
+
+      {:error, reason} ->
+        {:error, {:credential_provider_failed, reason}}
     end
   end
 
