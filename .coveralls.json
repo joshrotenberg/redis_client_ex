@@ -1,0 +1,7 @@
+{
+  "skip_files": [
+    "test/",
+    "lib/redis/application.ex"
+  ],
+  "minimum_coverage": 50
+}
