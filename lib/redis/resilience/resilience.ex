@@ -3,8 +3,10 @@ defmodule Redis.Resilience do
   Composable resilience wrapper for Redis connections.
 
   Stacks circuit breaker, retry, coalescing, and bulkhead patterns
-  around a Redis connection. All patterns are optional — include only
+  around a Redis connection. All patterns are optional -- include only
   what you need.
+
+  Requires `{:ex_resilience, "~> 0.4"}` in your dependencies.
 
   ## Usage
 
@@ -24,31 +26,33 @@ defmodule Redis.Resilience do
       # Inspect the stack
       Redis.Resilience.info(r)
 
-  ## Composition Order (inside → outside)
+  ## Composition Order (inside -> outside)
 
-      Connection → Retry → CircuitBreaker → Coalesce → Bulkhead
-                   ↑ retries transient errors
-                          ↑ fails fast when unhealthy
-                                       ↑ deduplicates concurrent requests
-                                                    ↑ limits concurrency
+      Connection -> Retry -> CircuitBreaker -> Coalesce -> Bulkhead
+                   ^ retries transient errors
+                          ^ fails fast when unhealthy
+                                       ^ deduplicates concurrent requests
+                                                    ^ limits concurrency
 
   ## Options
 
     * All `Redis.Connection` options (host, port, password, etc.)
-    * `:retry` - keyword opts for `Redis.Resilience.Retry`, or `false`
-    * `:circuit_breaker` - keyword opts for `Redis.Resilience.CircuitBreaker`, or `false`
-    * `:coalesce` - `true` or keyword opts for `Redis.Resilience.Coalesce`, or `false`
-    * `:bulkhead` - keyword opts for `Redis.Resilience.Bulkhead`, or `false`
+    * `:retry` - keyword opts for `ExResilience.Retry`, or `false`
+    * `:circuit_breaker` - keyword opts for `ExResilience.CircuitBreaker`, or `false`
+    * `:coalesce` - `true` or keyword opts, or `false`
+    * `:bulkhead` - keyword opts for `ExResilience.Bulkhead`, or `false`
+    * `:chaos` - keyword opts for `ExResilience.Chaos` (test only), or `false`
   """
+
+  @ex_resilience_available Code.ensure_loaded?(ExResilience)
 
   use GenServer
 
   alias Redis.Connection
-  alias Redis.Resilience.{Bulkhead, CircuitBreaker, Coalesce, Retry}
 
   require Logger
 
-  defstruct [:conn, :retry, :circuit_breaker, :coalesce, :bulkhead, :outer]
+  defstruct [:conn, :pipeline, :pipeline_name, :layers]
 
   # -------------------------------------------------------------------
   # Public API
@@ -60,13 +64,49 @@ defmodule Redis.Resilience do
     GenServer.start_link(__MODULE__, opts, gen_opts)
   end
 
-  def command(r, args, opts \\ []), do: GenServer.call(r, {:command, args, opts}, 30_000)
+  @doc """
+  Executes a Redis command through the resilience stack.
 
-  def pipeline(r, commands, opts \\ []),
-    do: GenServer.call(r, {:pipeline, commands, opts}, 30_000)
+  Pipeline calls run in the caller's process so that concurrency-limiting
+  layers (bulkhead) work correctly across concurrent callers.
+  """
+  def command(r, args, opts \\ []) do
+    case get_state(r) do
+      %{pipeline: nil, conn: conn} ->
+        Connection.command(conn, args, opts)
 
-  def transaction(r, commands, opts \\ []),
-    do: GenServer.call(r, {:transaction, commands, opts}, 30_000)
+      %{pipeline: pipeline, conn: conn} ->
+        call_through_pipeline(pipeline, fn -> Connection.command(conn, args, opts) end, args)
+    end
+  end
+
+  def pipeline(r, commands, opts \\ []) do
+    case get_state(r) do
+      %{pipeline: nil, conn: conn} ->
+        Connection.pipeline(conn, commands, opts)
+
+      %{pipeline: pipeline, conn: conn} ->
+        call_through_pipeline(
+          pipeline,
+          fn -> Connection.pipeline(conn, commands, opts) end,
+          commands
+        )
+    end
+  end
+
+  def transaction(r, commands, opts \\ []) do
+    case get_state(r) do
+      %{pipeline: nil, conn: conn} ->
+        Connection.transaction(conn, commands, opts)
+
+      %{pipeline: pipeline, conn: conn} ->
+        call_through_pipeline(
+          pipeline,
+          fn -> Connection.transaction(conn, commands, opts) end,
+          commands
+        )
+    end
+  end
 
   @doc "Returns info about the resilience stack."
   def info(r), do: GenServer.call(r, :info)
@@ -74,148 +114,199 @@ defmodule Redis.Resilience do
   def stop(r), do: GenServer.stop(r, :normal)
 
   # -------------------------------------------------------------------
-  # GenServer
+  # GenServer (lifecycle management and state queries only)
   # -------------------------------------------------------------------
+
+  @resilience_keys [:retry, :circuit_breaker, :coalesce, :bulkhead, :chaos]
 
   @impl true
   def init(opts) do
-    # Separate resilience opts from connection opts
-    {retry_opts, opts} = Keyword.pop(opts, :retry, false)
-    {cb_opts, opts} = Keyword.pop(opts, :circuit_breaker, false)
-    {coalesce_opts, opts} = Keyword.pop(opts, :coalesce, false)
-    {bulkhead_opts, opts} = Keyword.pop(opts, :bulkhead, false)
+    {resilience_opts, conn_opts} = split_opts(opts)
 
-    # Start the base connection
+    if has_resilience_opts?(resilience_opts) do
+      init_with_resilience(conn_opts, resilience_opts)
+    else
+      init_plain(conn_opts)
+    end
+  end
+
+  defp split_opts(opts) do
+    Enum.reduce(@resilience_keys, {%{}, opts}, fn key, {res, remaining} ->
+      {val, remaining} = Keyword.pop(remaining, key, false)
+      {Map.put(res, key, val), remaining}
+    end)
+  end
+
+  defp has_resilience_opts?(res) do
+    Enum.any?(@resilience_keys, fn key -> Map.get(res, key) != false end)
+  end
+
+  defp init_plain(opts) do
     with {:ok, conn} <- Connection.start_link(opts) do
-      # Build the wrapper chain: Connection → Retry → CircuitBreaker → Coalesce → Bulkhead
-      current = conn
-      layers = %{conn: conn}
+      {:ok, %__MODULE__{conn: conn, pipeline: nil, pipeline_name: nil, layers: []}}
+    end
+  end
 
-      {current, layers} = maybe_add_retry(current, layers, retry_opts)
-      {current, layers} = maybe_add_circuit_breaker(current, layers, cb_opts)
-      {current, layers} = maybe_add_coalesce(current, layers, coalesce_opts)
-      {current, layers} = maybe_add_bulkhead(current, layers, bulkhead_opts)
-
-      state = %__MODULE__{
-        conn: conn,
-        retry: layers[:retry],
-        circuit_breaker: layers[:circuit_breaker],
-        coalesce: layers[:coalesce],
-        bulkhead: layers[:bulkhead],
-        outer: current
-      }
-
-      {:ok, state}
+  defp init_with_resilience(opts, res) do
+    with {:ok, conn} <- Connection.start_link(opts) do
+      init_with_pipeline(
+        conn,
+        res.retry,
+        res.circuit_breaker,
+        res.coalesce,
+        res.bulkhead,
+        res.chaos
+      )
     end
   end
 
   @impl true
-  def handle_call({:command, args, opts}, _from, state) do
-    result = dispatch(state.outer, :command, [args, opts])
-    {:reply, result, state}
+  def handle_call(:info, _from, %{pipeline: nil} = state) do
+    {:reply, %{layers: [], circuit_breaker: nil, bulkhead: nil}, state}
   end
 
-  def handle_call({:pipeline, commands, opts}, _from, state) do
-    result = dispatch(state.outer, :pipeline, [commands, opts])
-    {:reply, result, state}
-  end
+  if @ex_resilience_available do
+    def handle_call(:info, _from, state) do
+      layer_names = Enum.map(state.layers, fn {layer, _} -> layer end)
 
-  def handle_call({:transaction, commands, opts}, _from, state) do
-    result = dispatch(state.outer, :transaction, [commands, opts])
-    {:reply, result, state}
-  end
+      cb_info =
+        if :circuit_breaker in layer_names do
+          cb_name = ExResilience.Pipeline.child_name(state.pipeline_name, :circuit_breaker)
+          ExResilience.CircuitBreaker.get_info(cb_name)
+        end
 
-  def handle_call(:info, _from, state) do
-    layers = []
-    layers = if state.bulkhead, do: [:bulkhead | layers], else: layers
-    layers = if state.coalesce, do: [:coalesce | layers], else: layers
-    layers = if state.circuit_breaker, do: [:circuit_breaker | layers], else: layers
-    layers = if state.retry, do: [:retry | layers], else: layers
+      bh_info =
+        if :bulkhead in layer_names do
+          bh_name = ExResilience.Pipeline.child_name(state.pipeline_name, :bulkhead)
 
-    cb_state =
-      if state.circuit_breaker do
-        CircuitBreaker.state(state.circuit_breaker)
-      end
+          %{
+            active: ExResilience.Bulkhead.active_count(bh_name),
+            queued: ExResilience.Bulkhead.queue_length(bh_name)
+          }
+        end
 
-    bh_state =
-      if state.bulkhead do
-        Bulkhead.state(state.bulkhead)
-      end
-
-    info = %{
-      layers: Enum.reverse(layers),
-      circuit_breaker: cb_state,
-      bulkhead: bh_state
-    }
-
-    {:reply, info, state}
+      {:reply, %{layers: layer_names, circuit_breaker: cb_info, bulkhead: bh_info}, state}
+    end
   end
 
   @impl true
   def terminate(_reason, state) do
-    # Stop layers in reverse order
-    if state.bulkhead, do: safe_stop(state.bulkhead)
-    if state.coalesce, do: safe_stop(state.coalesce)
-    if state.circuit_breaker, do: safe_stop(state.circuit_breaker)
-    if state.retry, do: safe_stop(state.retry)
+    if state.pipeline do
+      stop_pipeline(state)
+    end
+
     safe_stop(state.conn)
     :ok
   end
 
   # -------------------------------------------------------------------
-  # Layer construction
+  # State access (for caller-process pipeline execution)
   # -------------------------------------------------------------------
 
-  defp maybe_add_retry(current, layers, false), do: {current, layers}
-
-  defp maybe_add_retry(current, layers, opts) when is_list(opts) do
-    {:ok, pid} = Retry.start_link(Keyword.put(opts, :conn, current))
-    {pid, Map.put(layers, :retry, pid)}
-  end
-
-  defp maybe_add_circuit_breaker(current, layers, false), do: {current, layers}
-
-  defp maybe_add_circuit_breaker(current, layers, opts) when is_list(opts) do
-    {:ok, pid} = CircuitBreaker.start_link(Keyword.put(opts, :conn, current))
-    {pid, Map.put(layers, :circuit_breaker, pid)}
-  end
-
-  defp maybe_add_coalesce(current, layers, false), do: {current, layers}
-
-  defp maybe_add_coalesce(current, layers, true) do
-    maybe_add_coalesce(current, layers, [])
-  end
-
-  defp maybe_add_coalesce(current, layers, opts) when is_list(opts) do
-    {:ok, pid} = Coalesce.start_link(Keyword.put(opts, :conn, current))
-    {pid, Map.put(layers, :coalesce, pid)}
-  end
-
-  defp maybe_add_bulkhead(current, layers, false), do: {current, layers}
-
-  defp maybe_add_bulkhead(current, layers, opts) when is_list(opts) do
-    {:ok, pid} = Bulkhead.start_link(Keyword.put(opts, :conn, current))
-    {pid, Map.put(layers, :bulkhead, pid)}
-  end
+  defp get_state(r), do: :sys.get_state(r)
 
   # -------------------------------------------------------------------
-  # Dispatch
+  # Pipeline construction (only compiled when ex_resilience is available)
   # -------------------------------------------------------------------
 
-  # Dispatch to the outermost layer — could be Connection, Retry, CB, Coalesce, or Bulkhead
-  defp dispatch(pid, :command, [args, opts]) do
-    # Determine what module the pid belongs to by trying each API
-    # Since they all use GenServer.call with the same message format,
-    # we can just use the module that matches the pid
-    GenServer.call(pid, {:command, args, opts}, 30_000)
-  end
+  if @ex_resilience_available do
+    defp init_with_pipeline(conn, retry_opts, cb_opts, coalesce_opts, bulkhead_opts, chaos_opts) do
+      pipeline_name = :"redis_resilience_#{:erlang.unique_integer([:positive])}"
 
-  defp dispatch(pid, :pipeline, [commands, opts]) do
-    GenServer.call(pid, {:pipeline, commands, opts}, 30_000)
-  end
+      pipeline = ExResilience.new(pipeline_name)
 
-  defp dispatch(pid, :transaction, [commands, opts]) do
-    GenServer.call(pid, {:transaction, commands, opts}, 30_000)
+      # Build layers outside-in: Bulkhead -> Coalesce -> CircuitBreaker -> Retry -> Chaos
+      pipeline = maybe_add_layer(pipeline, :bulkhead, bulkhead_opts)
+      pipeline = maybe_add_layer(pipeline, :coalesce, coalesce_opts)
+      pipeline = maybe_add_layer(pipeline, :circuit_breaker, cb_opts)
+      pipeline = maybe_add_layer(pipeline, :retry, retry_opts)
+      pipeline = maybe_add_layer(pipeline, :chaos, chaos_opts)
+
+      pipeline = ExResilience.Pipeline.with_classifier(pipeline, Redis.Resilience.ErrorClassifier)
+
+      {:ok, _pids} = ExResilience.start(pipeline)
+
+      {:ok,
+       %__MODULE__{
+         conn: conn,
+         pipeline: pipeline,
+         pipeline_name: pipeline_name,
+         layers: pipeline.layers
+       }}
+    end
+
+    defp maybe_add_layer(pipeline, _layer, false), do: pipeline
+
+    defp maybe_add_layer(pipeline, :coalesce, true) do
+      maybe_add_layer(pipeline, :coalesce, [])
+    end
+
+    defp maybe_add_layer(pipeline, :coalesce, opts) when is_list(opts) do
+      key_fn = fn -> :erlang.phash2(Process.get(:redis_resilience_args)) end
+      ExResilience.add(pipeline, :coalesce, Keyword.put_new(opts, :key, key_fn))
+    end
+
+    defp maybe_add_layer(pipeline, :circuit_breaker, opts) when is_list(opts) do
+      # Sync half_open_max_calls with success_threshold so enough probes are allowed
+      opts =
+        case Keyword.get(opts, :success_threshold) do
+          nil -> opts
+          n -> Keyword.put_new(opts, :half_open_max_calls, n)
+        end
+
+      ExResilience.add(pipeline, :circuit_breaker, opts)
+    end
+
+    defp maybe_add_layer(pipeline, :retry, opts) when is_list(opts) do
+      opts = translate_jitter(opts)
+      ExResilience.add(pipeline, :retry, opts)
+    end
+
+    defp maybe_add_layer(pipeline, layer, opts) when is_list(opts) do
+      ExResilience.add(pipeline, layer, opts)
+    end
+
+    defp translate_jitter(opts) do
+      case Keyword.get(opts, :jitter) do
+        nil -> opts
+        j when is_float(j) and j == 0.0 -> Keyword.put(opts, :jitter, false)
+        j when is_float(j) -> opts
+        _ -> opts
+      end
+    end
+
+    defp call_through_pipeline(pipeline, fun, args) do
+      Process.put(:redis_resilience_args, args)
+      result = ExResilience.call(pipeline, fun)
+      Process.delete(:redis_resilience_args)
+      unwrap_result(result)
+    end
+
+    defp unwrap_result({:ok, {:ok, _} = inner}), do: inner
+    defp unwrap_result({:ok, {:error, _} = inner}), do: inner
+    defp unwrap_result({:ok, result}), do: {:ok, result}
+    defp unwrap_result({:error, _} = err), do: err
+    defp unwrap_result(other), do: other
+
+    defp stop_pipeline(state) do
+      for {layer, _opts} <- state.layers do
+        name = ExResilience.Pipeline.child_name(state.pipeline_name, layer)
+
+        if Process.whereis(name) do
+          GenServer.stop(name, :normal)
+        end
+      end
+    catch
+      :exit, _ -> :ok
+    end
+  else
+    defp init_with_pipeline(_, _, _, _, _, _) do
+      {:stop,
+       {:missing_dependency,
+        "Resilience options require {:ex_resilience, \"~> 0.4\"} in your deps"}}
+    end
+
+    defp call_through_pipeline(_, _, _), do: {:error, :ex_resilience_not_available}
   end
 
   defp safe_stop(pid) do

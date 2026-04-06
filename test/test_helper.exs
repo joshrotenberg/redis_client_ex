@@ -10,7 +10,8 @@ exclude =
   if(env_enabled?.("REDIS_STACK"), do: [], else: [:redis_stack]) ++
     if(env_enabled?.("REDIS_SENTINEL"), do: [], else: [:sentinel]) ++
     if(env_enabled?.("REDIS_CLUSTER_FAILOVER"), do: [], else: [:cluster_failover]) ++
-    if(env_enabled?.("REDIS_COMPAT"), do: [], else: [:compat])
+    if(env_enabled?.("REDIS_COMPAT"), do: [], else: [:compat]) ++
+    if(Code.ensure_loaded?(ExResilience), do: [], else: [:ex_resilience])
 
 ExUnit.start(exclude: exclude)
 
