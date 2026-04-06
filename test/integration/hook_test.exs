@@ -33,11 +33,9 @@ defmodule Redis.Integration.HookTest do
     end
 
     def cleanup do
-      try do
-        :ets.delete(:hook_counter)
-      rescue
-        ArgumentError -> :ok
-      end
+      :ets.delete(:hook_counter)
+    rescue
+      ArgumentError -> :ok
     end
 
     def count(key) do
