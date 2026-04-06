@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.0](https://github.com/joshrotenberg/redis_client_ex/compare/v0.6.0...v0.7.0) (2026-04-06)
+
+
+### Features
+
+* add credential provider for auth token rotation ([#122](https://github.com/joshrotenberg/redis_client_ex/issues/122)) ([46b8115](https://github.com/joshrotenberg/redis_client_ex/commit/46b8115e384d704b010e86ec46b9e7e3cb4352bd)), closes [#111](https://github.com/joshrotenberg/redis_client_ex/issues/111)
+* add custom codec/serializer support ([#121](https://github.com/joshrotenberg/redis_client_ex/issues/121)) ([b926bf7](https://github.com/joshrotenberg/redis_client_ex/commit/b926bf7a1f61e225bc991f57a3b83c8418a8b537)), closes [#110](https://github.com/joshrotenberg/redis_client_ex/issues/110)
+* add hook/interceptor system for command middleware ([#120](https://github.com/joshrotenberg/redis_client_ex/issues/120)) ([30cb2dc](https://github.com/joshrotenberg/redis_client_ex/commit/30cb2dc9145ee791dc6572ae00d23d592566fa10))
+* add optional OpenTelemetry integration ([#118](https://github.com/joshrotenberg/redis_client_ex/issues/118)) ([0078580](https://github.com/joshrotenberg/redis_client_ex/commit/0078580fc33dc530578650ed8362782f564cee8e)), closes [#108](https://github.com/joshrotenberg/redis_client_ex/issues/108)
+* add Redis Functions support (FCALL/FCALL_RO) ([#117](https://github.com/joshrotenberg/redis_client_ex/issues/117)) ([e6861aa](https://github.com/joshrotenberg/redis_client_ex/commit/e6861aa10d326259c9b847e68245c74c0624a821)), closes [#105](https://github.com/joshrotenberg/redis_client_ex/issues/105)
+* add vector set commands ([#119](https://github.com/joshrotenberg/redis_client_ex/issues/119)) ([395b689](https://github.com/joshrotenberg/redis_client_ex/commit/395b6893aa0d6cfe1f34a836b74b39de67b10522)), closes [#106](https://github.com/joshrotenberg/redis_client_ex/issues/106)
+* replace inline resilience with ex_resilience optional dependency ([#102](https://github.com/joshrotenberg/redis_client_ex/issues/102)) ([aaa45be](https://github.com/joshrotenberg/redis_client_ex/commit/aaa45be975b2bdf6ce1f11ebaa264e696be4c64d))
+
 ## [0.6.0](https://github.com/joshrotenberg/redis_client_ex/compare/v0.5.0...v0.6.0) (2026-04-05)
 
 
