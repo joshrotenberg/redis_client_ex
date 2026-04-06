@@ -14,9 +14,20 @@ defmodule Redis.MixProject do
       docs: docs(),
       package: package(),
       dialyzer: dialyzer(),
+      test_coverage: [tool: ExCoveralls],
       name: "Redis",
       description:
         "Modern, full-featured Redis client for Elixir with RESP3, clustering, sentinel, client-side caching, and resilience patterns"
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.html": :test
+      ]
     ]
   end
 
@@ -37,6 +48,7 @@ defmodule Redis.MixProject do
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:excoveralls, "~> 0.18", only: :test, runtime: false},
       {:stream_data, "~> 1.0", only: [:test]},
       {:mox, "~> 1.0", only: [:test]},
       {:redis_server_wrapper, "~> 0.3", only: [:test, :bench]},
