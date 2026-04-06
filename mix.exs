@@ -39,7 +39,7 @@ defmodule Redis.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:stream_data, "~> 1.0", only: [:test]},
       {:mox, "~> 1.0", only: [:test]},
-      {:redis_server_wrapper, "~> 0.3", only: [:test, :bench]},
+      {:redis_server_wrapper, "~> 0.4.1", only: [:test, :bench]},
       {:redix, "~> 1.5", only: :bench},
       {:benchee, "~> 1.0", only: :bench}
     ]
