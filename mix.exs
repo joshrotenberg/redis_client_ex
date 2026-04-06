@@ -32,6 +32,9 @@ defmodule Redis.MixProject do
       {:ex_resilience, "~> 0.4.0", optional: true},
       {:telemetry, "~> 1.0", optional: true},
       {:jason, "~> 1.4", optional: true},
+      {:opentelemetry_api, "~> 1.4", optional: true},
+      {:opentelemetry, "~> 1.5", only: :test},
+      {:opentelemetry_exporter, "~> 1.8", only: :test},
       {:phoenix_pubsub, "~> 2.1", optional: true},
       {:plug, "~> 1.14", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
@@ -47,7 +50,7 @@ defmodule Redis.MixProject do
 
   defp dialyzer do
     [
-      plt_add_apps: [:ex_resilience, :telemetry, :jason],
+      plt_add_apps: [:ex_resilience, :telemetry, :jason, :opentelemetry_api],
       plt_core_path: "_build/#{Mix.env()}"
     ]
   end
