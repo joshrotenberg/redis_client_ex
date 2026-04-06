@@ -6,7 +6,6 @@ defmodule Redis.IntegrationTest do
   alias Redis.Connection.Pool
   alias Redis.PubSub
   alias Redis.Resilience
-  alias Redis.Resilience.CircuitBreaker
 
   @moduletag timeout: 60_000
 
@@ -248,18 +247,18 @@ defmodule Redis.IntegrationTest do
   # -------------------------------------------------------------------
 
   describe "resilience patterns" do
+    @describetag :ex_resilience
+
     test "circuit breaker trips on repeated failures" do
       {:ok, srv} = RedisServerWrapper.Server.start_link(port: 6459)
-      {:ok, conn} = Connection.start_link(port: 6459)
 
-      {:ok, cb} =
-        CircuitBreaker.start_link(
-          conn: conn,
-          failure_threshold: 3,
-          reset_timeout: 2_000
+      {:ok, r} =
+        Resilience.start_link(
+          port: 6459,
+          circuit_breaker: [failure_threshold: 3, reset_timeout: 2_000]
         )
 
-      assert {:ok, "PONG"} = CircuitBreaker.command(cb, ["PING"])
+      assert {:ok, "PONG"} = Resilience.command(r, ["PING"])
 
       # Kill the server to cause failures
       RedisServerWrapper.Server.stop(srv)
@@ -267,24 +266,21 @@ defmodule Redis.IntegrationTest do
 
       # Trigger failures to trip the breaker
       for _ <- 1..5 do
-        CircuitBreaker.command(cb, ["PING"])
+        Resilience.command(r, ["PING"])
       end
 
-      state = CircuitBreaker.state(cb)
-      assert state.state == :open
+      Process.sleep(50)
+      info = Resilience.info(r)
+      assert info.circuit_breaker.state == :open
 
       # Open circuit should fail fast
-      assert {:error, :circuit_open} = CircuitBreaker.command(cb, ["PING"])
+      assert {:error, :circuit_open} = Resilience.command(r, ["PING"])
 
       # Restart server and wait for half-open
       {:ok, _srv2} = RedisServerWrapper.Server.start_link(port: 6459)
-      Process.sleep(3000)
+      Process.sleep(4000)
 
-      # The connection needs to reconnect too
-      Process.sleep(1000)
-
-      CircuitBreaker.stop(cb)
-      Connection.stop(conn)
+      Resilience.stop(r)
       Process.sleep(500)
     end
 

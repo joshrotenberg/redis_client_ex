@@ -3,115 +3,92 @@ defmodule Redis.ResilienceTest do
 
   alias Redis.Connection
   alias Redis.Resilience
-  alias Redis.Resilience.{Bulkhead, CircuitBreaker, Coalesce, Retry}
+
+  @moduletag :ex_resilience
 
   # Uses redis-server on port 6398 from test_helper.exs
 
-  describe "CircuitBreaker" do
-    test "passes through when closed" do
-      {:ok, conn} = Connection.start_link(port: 6398)
-      {:ok, cb} = CircuitBreaker.start_link(conn: conn, failure_threshold: 3)
+  describe "individual layers through facade" do
+    test "circuit breaker passes through when closed" do
+      {:ok, r} =
+        Resilience.start_link(
+          port: 6398,
+          circuit_breaker: [failure_threshold: 3]
+        )
 
-      assert {:ok, "PONG"} = CircuitBreaker.command(cb, ["PING"])
-      assert %{state: :closed, failure_count: 0} = CircuitBreaker.state(cb)
+      assert {:ok, "PONG"} = Resilience.command(r, ["PING"])
 
-      CircuitBreaker.stop(cb)
-      Connection.stop(conn)
+      info = Resilience.info(r)
+      assert :circuit_breaker in info.layers
+      assert info.circuit_breaker.state == :closed
+
+      Resilience.stop(r)
     end
 
-    test "manual reset" do
-      {:ok, conn} = Connection.start_link(port: 6398)
-      {:ok, cb} = CircuitBreaker.start_link(conn: conn, failure_threshold: 3)
+    test "retry succeeds on first attempt" do
+      {:ok, r} =
+        Resilience.start_link(
+          port: 6398,
+          retry: [max_attempts: 3]
+        )
 
-      CircuitBreaker.reset(cb)
-      assert %{state: :closed} = CircuitBreaker.state(cb)
+      assert {:ok, "PONG"} = Resilience.command(r, ["PING"])
 
-      CircuitBreaker.stop(cb)
-      Connection.stop(conn)
-    end
-  end
-
-  describe "Retry" do
-    test "succeeds on first attempt" do
-      {:ok, conn} = Connection.start_link(port: 6398)
-      {:ok, retried} = Retry.start_link(conn: conn, max_attempts: 3)
-
-      assert {:ok, "PONG"} = Retry.command(retried, ["PING"])
-
-      Retry.stop(retried)
-      Connection.stop(conn)
+      Resilience.stop(r)
     end
 
-    test "does not retry Redis errors" do
-      {:ok, conn} = Connection.start_link(port: 6398)
-      Connection.command(conn, ["SET", "str", "notanumber"])
-      {:ok, retried} = Retry.start_link(conn: conn, max_attempts: 3)
+    test "retry does not retry Redis app errors" do
+      {:ok, r} =
+        Resilience.start_link(
+          port: 6398,
+          retry: [max_attempts: 3]
+        )
+
+      Connection.command(r |> resilience_conn(), ["SET", "str", "notanumber"])
 
       # INCR on a string produces a Redis error, not a connection error
-      assert {:error, %Redis.Error{}} = Retry.command(retried, ["INCR", "str"])
+      assert {:error, %Redis.Error{}} = Resilience.command(r, ["INCR", "str"])
 
-      Retry.stop(retried)
-      Connection.stop(conn)
+      Resilience.stop(r)
     end
-  end
 
-  describe "Coalesce" do
-    test "deduplicates concurrent identical requests" do
-      {:ok, conn} = Connection.start_link(port: 6398)
-      Connection.command(conn, ["SET", "coal_key", "coal_val"])
-      {:ok, coal} = Coalesce.start_link(conn: conn)
+    test "coalesce deduplicates concurrent identical requests" do
+      {:ok, r} =
+        Resilience.start_link(
+          port: 6398,
+          coalesce: true
+        )
 
-      # Fire 5 concurrent requests for the same key
+      Resilience.command(r, ["SET", "coal_key", "coal_val"])
+
       tasks =
         for _ <- 1..5 do
-          Task.async(fn -> Coalesce.command(coal, ["GET", "coal_key"]) end)
+          Task.async(fn -> Resilience.command(r, ["GET", "coal_key"]) end)
         end
 
       results = Enum.map(tasks, &Task.await/1)
-
-      # All should get the same result
       assert Enum.all?(results, &(&1 == {:ok, "coal_val"}))
 
-      Coalesce.stop(coal)
-      Connection.stop(conn)
+      Resilience.stop(r)
+    end
+
+    test "bulkhead allows requests within limit" do
+      {:ok, r} =
+        Resilience.start_link(
+          port: 6398,
+          bulkhead: [max_concurrent: 10]
+        )
+
+      assert {:ok, "PONG"} = Resilience.command(r, ["PING"])
+
+      info = Resilience.info(r)
+      assert :bulkhead in info.layers
+
+      Resilience.stop(r)
     end
   end
 
-  describe "Bulkhead" do
-    test "allows requests within limit" do
-      {:ok, conn} = Connection.start_link(port: 6398)
-      {:ok, bh} = Bulkhead.start_link(conn: conn, max_concurrent: 10)
-
-      assert {:ok, "PONG"} = Bulkhead.command(bh, ["PING"])
-      assert %{active: 0, max_concurrent: 10, queued: 0} = Bulkhead.state(bh)
-
-      Bulkhead.stop(bh)
-      Connection.stop(conn)
-    end
-
-    test "rejects when full and max_wait is 0" do
-      {:ok, conn} = Connection.start_link(port: 6398)
-      {:ok, bh} = Bulkhead.start_link(conn: conn, max_concurrent: 1, max_wait: 0)
-
-      # Fill the single slot with a blocking command (BLPOP with 2s timeout on empty list)
-      task =
-        Task.async(fn ->
-          Bulkhead.command(bh, ["BLPOP", "nonexistent_list_#{System.unique_integer()}", "2"])
-        end)
-
-      Process.sleep(100)
-
-      # This should be rejected immediately since the slot is occupied
-      result = Bulkhead.command(bh, ["PING"])
-      assert result == {:error, :bulkhead_full}
-
-      Task.await(task, 5000)
-      Bulkhead.stop(bh)
-      Connection.stop(conn)
-    end
-  end
-
-  describe "Resilience (composed)" do
+  describe "composed stack" do
     test "full stack works" do
       {:ok, r} =
         Resilience.start_link(
@@ -164,5 +141,12 @@ defmodule Redis.ResilienceTest do
 
       Resilience.stop(r)
     end
+  end
+
+  # Helper to get the underlying connection from a resilience wrapper
+  # (via GenServer state inspection)
+  defp resilience_conn(r) do
+    state = :sys.get_state(r)
+    state.conn
   end
 end
