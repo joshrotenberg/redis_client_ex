@@ -27,6 +27,7 @@ defmodule Redis.Connection do
       When set, `:password` and `:username` are ignored.
     * `:exit_on_disconnection` - exit instead of reconnecting (default: false)
     * `:hibernate_after` - idle ms before hibernation (default: nil)
+    * `:hooks` - list of `Redis.Hook` modules for command middleware (default: [])
 
   A Redis URI string may be passed as the first (sole) argument:
 
@@ -60,7 +61,8 @@ defmodule Redis.Connection do
     state: :disconnected,
     exit_on_disconnection: false,
     buffer: <<>>,
-    callers: :queue.new()
+    callers: :queue.new(),
+    hooks: []
   ]
 
   @behaviour Redis.Connection.Behaviour
@@ -183,7 +185,7 @@ defmodule Redis.Connection do
          result <- GenServer.call(conn, {:transaction, commands}, timeout) do
       case result do
         {:error, :transaction_aborted} ->
-          # WATCH conflict — EXEC returned nil, retry
+          # WATCH conflict -- EXEC returned nil, retry
           do_watch_transaction(conn, keys, fun, opts, retries_left - 1)
 
         other ->
@@ -191,7 +193,7 @@ defmodule Redis.Connection do
       end
     else
       {:abort, reason} ->
-        # User aborted — unwatch and return error
+        # User aborted -- unwatch and return error
         GenServer.call(conn, {:command, ["UNWATCH"]}, timeout)
         {:error, {:aborted, reason}}
 
@@ -272,7 +274,8 @@ defmodule Redis.Connection do
       timeout: Keyword.get(opts, :timeout, 5_000),
       exit_on_disconnection: Keyword.get(opts, :exit_on_disconnection, false),
       push_receiver: Keyword.get(opts, :push_receiver),
-      credential_provider: credential_provider
+      credential_provider: credential_provider,
+      hooks: Keyword.get(opts, :hooks, [])
     }
 
     sync = Keyword.get(opts, :sync_connect, true)
@@ -303,42 +306,70 @@ defmodule Redis.Connection do
   end
 
   def handle_call({:command, args}, from, %{state: :ready} = state) do
-    data = encode(state.protocol, args)
+    ctx = hook_context(state)
 
-    case send_data(state, data) do
-      :ok ->
-        callers = :queue.in({from, :single}, state.callers)
-        {:noreply, %{state | callers: callers}}
+    case Redis.Hook.run_before_command(state.hooks, args, ctx) do
+      {:error, _} = err ->
+        {:reply, err, state}
 
-      {:error, reason} ->
-        {:reply, {:error, %Redis.ConnectionError{reason: reason}}, handle_disconnect(state)}
+      {:ok, args} ->
+        data = encode(state.protocol, args)
+
+        case send_data(state, data) do
+          :ok ->
+            callers = :queue.in({from, :single, {args, ctx}}, state.callers)
+            {:noreply, %{state | callers: callers}}
+
+          {:error, reason} ->
+            {:reply, {:error, %Redis.ConnectionError{reason: reason}}, handle_disconnect(state)}
+        end
     end
   end
 
   def handle_call({:pipeline, commands}, from, %{state: :ready} = state) do
-    data = encode_pipeline(state.protocol, commands)
+    ctx = hook_context(state)
 
-    case send_data(state, data) do
-      :ok ->
-        callers = :queue.in({from, {:pipeline, length(commands)}}, state.callers)
-        {:noreply, %{state | callers: callers}}
+    case Redis.Hook.run_before_pipeline(state.hooks, commands, ctx) do
+      {:error, _} = err ->
+        {:reply, err, state}
 
-      {:error, reason} ->
-        {:reply, {:error, %Redis.ConnectionError{reason: reason}}, handle_disconnect(state)}
+      {:ok, commands} ->
+        data = encode_pipeline(state.protocol, commands)
+
+        case send_data(state, data) do
+          :ok ->
+            callers =
+              :queue.in({from, {:pipeline, length(commands)}, {commands, ctx}}, state.callers)
+
+            {:noreply, %{state | callers: callers}}
+
+          {:error, reason} ->
+            {:reply, {:error, %Redis.ConnectionError{reason: reason}}, handle_disconnect(state)}
+        end
     end
   end
 
   def handle_call({:transaction, commands}, from, %{state: :ready} = state) do
-    full = [["MULTI"]] ++ commands ++ [["EXEC"]]
-    data = encode_pipeline(state.protocol, full)
+    ctx = hook_context(state)
 
-    case send_data(state, data) do
-      :ok ->
-        callers = :queue.in({from, {:transaction, length(full)}}, state.callers)
-        {:noreply, %{state | callers: callers}}
+    case Redis.Hook.run_before_pipeline(state.hooks, commands, ctx) do
+      {:error, _} = err ->
+        {:reply, err, state}
 
-      {:error, reason} ->
-        {:reply, {:error, %Redis.ConnectionError{reason: reason}}, handle_disconnect(state)}
+      {:ok, commands} ->
+        full = [["MULTI"]] ++ commands ++ [["EXEC"]]
+        data = encode_pipeline(state.protocol, full)
+
+        case send_data(state, data) do
+          :ok ->
+            callers =
+              :queue.in({from, {:transaction, length(full)}, {commands, ctx}}, state.callers)
+
+            {:noreply, %{state | callers: callers}}
+
+          {:error, reason} ->
+            {:reply, {:error, %Redis.ConnectionError{reason: reason}}, handle_disconnect(state)}
+        end
     end
   end
 
@@ -350,7 +381,7 @@ defmodule Redis.Connection do
 
     case send_data(state, data) do
       :ok ->
-        callers = :queue.in({from, :noreply}, state.callers)
+        callers = :queue.in({from, :noreply, nil}, state.callers)
         {:noreply, %{state | callers: callers}}
 
       {:error, reason} ->
@@ -364,7 +395,7 @@ defmodule Redis.Connection do
 
     case send_data(state, data) do
       :ok ->
-        callers = :queue.in({from, :noreply}, state.callers)
+        callers = :queue.in({from, :noreply, nil}, state.callers)
         {:noreply, %{state | callers: callers}}
 
       {:error, reason} ->
@@ -687,19 +718,24 @@ defmodule Redis.Connection do
   # -------------------------------------------------------------------
 
   defp process_buffer(state) do
-    # Check for push messages first — they can arrive interleaved with responses
+    # Check for push messages first -- they can arrive interleaved with responses
     state = drain_pushes(state)
 
     case :queue.peek(state.callers) do
-      :empty -> state
-      {:value, {from, type}} -> process_caller(state, from, type)
+      :empty ->
+        state
+
+      {:value, {from, type, hook_meta}} ->
+        process_caller(state, from, type, hook_meta)
     end
   end
 
-  defp process_caller(state, from, :single) do
+  defp process_caller(state, from, :single, hook_meta) do
     case decode(state.protocol, state.buffer) do
       {:ok, response, rest} ->
-        GenServer.reply(from, wrap_response(response))
+        result = wrap_response(response)
+        result = run_after_hooks(state, :command, hook_meta, result)
+        GenServer.reply(from, result)
         advance_and_continue(state, rest)
 
       {:continuation, _} ->
@@ -707,10 +743,12 @@ defmodule Redis.Connection do
     end
   end
 
-  defp process_caller(state, from, {:pipeline, count}) do
+  defp process_caller(state, from, {:pipeline, count}, hook_meta) do
     case decode_n(state.protocol, state.buffer, count) do
       {:ok, responses, rest} ->
-        GenServer.reply(from, {:ok, responses})
+        result = {:ok, responses}
+        result = run_after_hooks(state, :pipeline, hook_meta, result)
+        GenServer.reply(from, result)
         advance_and_continue(state, rest)
 
       {:continuation, _} ->
@@ -718,10 +756,12 @@ defmodule Redis.Connection do
     end
   end
 
-  defp process_caller(state, from, {:transaction, count}) do
+  defp process_caller(state, from, {:transaction, count}, hook_meta) do
     case decode_n(state.protocol, state.buffer, count) do
       {:ok, responses, rest} ->
-        GenServer.reply(from, transaction_reply(responses))
+        result = transaction_reply(responses)
+        result = run_after_hooks(state, :pipeline, hook_meta, result)
+        GenServer.reply(from, result)
         advance_and_continue(state, rest)
 
       {:continuation, _} ->
@@ -729,7 +769,7 @@ defmodule Redis.Connection do
     end
   end
 
-  defp process_caller(state, from, :noreply) do
+  defp process_caller(state, from, :noreply, _hook_meta) do
     # Expect exactly one response: the OK from CLIENT REPLY ON
     case decode(state.protocol, state.buffer) do
       {:ok, _response, rest} ->
@@ -740,6 +780,18 @@ defmodule Redis.Connection do
         state
     end
   end
+
+  defp run_after_hooks(%{hooks: []}, _type, _hook_meta, result), do: result
+
+  defp run_after_hooks(%{hooks: hooks}, :command, {args, ctx}, result) do
+    Redis.Hook.run_after_command(hooks, args, result, ctx)
+  end
+
+  defp run_after_hooks(%{hooks: hooks}, :pipeline, {commands, ctx}, result) do
+    Redis.Hook.run_after_pipeline(hooks, commands, result, ctx)
+  end
+
+  defp run_after_hooks(_state, _type, nil, result), do: result
 
   defp advance_and_continue(state, rest) do
     process_buffer(%{state | buffer: rest, callers: :queue.drop(state.callers)})
@@ -797,6 +849,14 @@ defmodule Redis.Connection do
   end
 
   # -------------------------------------------------------------------
+  # Hooks
+  # -------------------------------------------------------------------
+
+  defp hook_context(state) do
+    Redis.Hook.build_context(state)
+  end
+
+  # -------------------------------------------------------------------
   # Reconnection
   # -------------------------------------------------------------------
 
@@ -820,7 +880,7 @@ defmodule Redis.Connection do
 
     state.callers
     |> :queue.to_list()
-    |> Enum.each(fn {from, _type} -> GenServer.reply(from, error) end)
+    |> Enum.each(fn {from, _type, _hook_meta} -> GenServer.reply(from, error) end)
 
     %{state | callers: :queue.new()}
   end
