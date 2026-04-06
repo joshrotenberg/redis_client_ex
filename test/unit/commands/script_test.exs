@@ -154,6 +154,20 @@ defmodule Redis.Commands.ScriptExpandedTest do
     end
   end
 
+  describe "FUNCTION FLUSH" do
+    test "without mode" do
+      assert Script.function_flush() == ["FUNCTION", "FLUSH"]
+    end
+
+    test "with async mode" do
+      assert Script.function_flush(mode: :async) == ["FUNCTION", "FLUSH", "ASYNC"]
+    end
+
+    test "with sync mode" do
+      assert Script.function_flush(mode: :sync) == ["FUNCTION", "FLUSH", "SYNC"]
+    end
+  end
+
   describe "FUNCTION STATS" do
     test "basic" do
       assert Script.function_stats() == ["FUNCTION", "STATS"]

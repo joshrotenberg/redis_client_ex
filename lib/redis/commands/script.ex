@@ -113,6 +113,28 @@ defmodule Redis.Commands.Script do
     end
   end
 
+  @doc """
+  FUNCTION FLUSH -- delete all function libraries (Redis 7+).
+
+  Pass `mode: :async` or `mode: :sync` to control flush behaviour.
+
+      Script.function_flush()
+      #=> ["FUNCTION", "FLUSH"]
+
+      Script.function_flush(mode: :async)
+      #=> ["FUNCTION", "FLUSH", "ASYNC"]
+  """
+  @spec function_flush(keyword()) :: [String.t()]
+  def function_flush(opts \\ []) do
+    cmd = ["FUNCTION", "FLUSH"]
+
+    case opts[:mode] do
+      :async -> cmd ++ ["ASYNC"]
+      :sync -> cmd ++ ["SYNC"]
+      nil -> cmd
+    end
+  end
+
   @spec function_stats() :: [String.t()]
   def function_stats, do: ["FUNCTION", "STATS"]
 
