@@ -241,7 +241,7 @@ defmodule Redis.Consumer do
         block: state.block
       )
 
-    Connection.command(state.conn, cmd)
+    Connection.command(state.conn, cmd, timeout: state.block + 5_000)
   end
 
   defp process_messages(state, messages) do

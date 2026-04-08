@@ -307,6 +307,8 @@ defmodule Redis.Resilience do
     end
 
     defp call_through_pipeline(_, _, _), do: {:error, :ex_resilience_not_available}
+
+    defp stop_pipeline(_state), do: :ok
   end
 
   defp safe_stop(pid) do
