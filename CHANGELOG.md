@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/joshrotenberg/redis_client_ex/compare/v0.7.0...v0.7.1) (2026-04-08)
+
+
+### Bug Fixes
+
+* consumer XREADGROUP timeout and resilience compile error ([#124](https://github.com/joshrotenberg/redis_client_ex/issues/124)) ([4a55ce9](https://github.com/joshrotenberg/redis_client_ex/commit/4a55ce95a4031fd8567629cf9ed643eb2bccb7dd))
+
 ## [0.7.0](https://github.com/joshrotenberg/redis_client_ex/compare/v0.6.0...v0.7.0) (2026-04-06)
 
 
