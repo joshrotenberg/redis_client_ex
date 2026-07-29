@@ -55,11 +55,23 @@ version matrix; full integration tests run on a daily schedule.
 
 - One PR per issue/feature
 - Reference the issue with `Closes #N` in the PR body
-- Use [conventional commits](https://www.conventionalcommits.org/):
+- Use a [conventional commit](https://www.conventionalcommits.org/) PR title,
+  because the squash-merge title becomes the commit on `main`:
   `feat:`, `fix:`, `docs:`, `test:`, `chore:`, `refactor:`
 - Keep PRs focused -- separate unrelated changes into separate PRs
 - Add tests for new features
 - Update documentation for public API changes
+
+## Releases
+
+Release Please reads the conventional squash commits on `main` and opens a
+release PR that updates `CHANGELOG.md`, `mix.exs`, and the release manifest.
+Merging that generated PR creates the GitHub release and publishes the package
+to Hex.pm through `.github/workflows/release.yml`.
+
+Do not bump the version or create tags manually. For an explicitly selected
+version, use a `Release-As: x.y.z` footer on a conventional commit and let the
+generated release PR make the versioned file changes.
 
 ## Test Organization
 
