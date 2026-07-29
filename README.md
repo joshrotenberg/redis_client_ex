@@ -129,6 +129,30 @@ Typed mode parses `HGETALL`, `CONFIG GET`, set operations, `INFO`,
 commands pass through unchanged, including within mixed pipelines. See
 `Redis.Response` for the complete return types.
 
+## Auto-Pipelining
+
+Opt in to automatic batching when many processes issue commands concurrently:
+
+```elixir
+{:ok, conn} = Redis.start_link(
+  auto_pipeline: true,
+  auto_pipeline_window: 1,       # collect commands for up to 1 ms
+  auto_pipeline_max_size: 1_000  # or flush when this size is reached
+)
+
+1..100
+|> Task.async_stream(fn i ->
+  Redis.command(conn, ["SET", "key:#{i}", to_string(i)])
+end, max_concurrency: 100)
+|> Stream.run()
+```
+
+Each caller still receives only its own reply, with its own hooks, telemetry,
+timeout, and typed-response handling. Explicit pipelines, transactions, and
+no-reply operations act as ordering barriers and flush queued commands first.
+The feature is disabled by default. `Redis.Connection.Pool` passes the options
+to every physical connection, so each connection builds independent batches.
+
 ## Command Builders
 
 Pure functions that return command lists. Use them with any connection type.
@@ -444,6 +468,7 @@ Redis.Resilience.command(conn, ["GET", "key"])
 - **Phoenix.PubSub adapter** for cross-node broadcasting (optional dep)
 - **Streams Consumer** with consumer groups, auto-ack, and pending message recovery
 - **WATCH transactions** with automatic retry on conflict
+- **Auto-pipelining** for concurrent callers, with per-connection batching
 - **JSON documents** with map-based CRUD, nested paths, atomic operations (Redis Stack)
 - **Search** with Elixir filter expressions, auto-coercion, parsed results (Redis Stack)
 - **Plug session store** with configurable TTL

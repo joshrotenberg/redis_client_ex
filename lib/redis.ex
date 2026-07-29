@@ -45,6 +45,15 @@ defmodule Redis do
       {:ok, entries} =
         Redis.command_typed(conn, ["XRANGE", "events", "-", "+"])
 
+  ## Auto-Pipelining
+
+      {:ok, conn} =
+        Redis.start_link(
+          auto_pipeline: true,
+          auto_pipeline_window: 1,
+          auto_pipeline_max_size: 1_000
+        )
+
   ## Transactions
 
       {:ok, [1, 2, 3]} = Redis.transaction(conn, [
