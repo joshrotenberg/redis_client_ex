@@ -7,7 +7,7 @@ defmodule Redis.Commands.JSON do
   object, array, string, and numeric operations.
 
   All path arguments default to `"$"` (JSONPath root). Values passed to
-  mutating functions are automatically encoded via `JSON.encode!/1` unless
+  mutating functions are automatically encoded via `Jason.encode!/1` unless
   the `raw: true` option is given.
 
   Every function returns a command list for use with `Redis.command/2` or
@@ -24,6 +24,8 @@ defmodule Redis.Commands.JSON do
       # Append elements to a nested array
       Redis.command(conn, JSON.arrappend("user:1", ["reading", "hiking"], "$.hobbies"))
   """
+
+  @compile {:no_warn_undefined, Jason}
 
   @root "$"
 
@@ -93,7 +95,7 @@ defmodule Redis.Commands.JSON do
   @doc "JSON.STRAPPEND — append to a string at a path."
   @spec strappend(String.t(), String.t(), String.t()) :: [String.t()]
   def strappend(key, value, path \\ @root) do
-    ["JSON.STRAPPEND", key, path, JSON.encode!(value)]
+    ["JSON.STRAPPEND", key, path, encode_json(value)]
   end
 
   # -------------------------------------------------------------------
@@ -119,14 +121,14 @@ defmodule Redis.Commands.JSON do
   @doc "JSON.ARRAPPEND — append values to an array."
   @spec arrappend(String.t(), [term()], String.t()) :: [String.t()]
   def arrappend(key, values, path \\ @root) when is_list(values) do
-    encoded = Enum.map(values, &JSON.encode!/1)
+    encoded = Enum.map(values, &encode_json/1)
     ["JSON.ARRAPPEND", key, path | encoded]
   end
 
   @doc "JSON.ARRINSERT — insert values at an index."
   @spec arrinsert(String.t(), non_neg_integer(), [term()], String.t()) :: [String.t()]
   def arrinsert(key, index, values, path \\ @root) when is_list(values) do
-    encoded = Enum.map(values, &JSON.encode!/1)
+    encoded = Enum.map(values, &encode_json/1)
     ["JSON.ARRINSERT", key, path, to_string(index) | encoded]
   end
 
@@ -149,7 +151,7 @@ defmodule Redis.Commands.JSON do
   @doc "JSON.ARRINDEX — find index of a value in an array."
   @spec arrindex(String.t(), term(), String.t()) :: [String.t()]
   def arrindex(key, value, path \\ @root) do
-    ["JSON.ARRINDEX", key, path, JSON.encode!(value)]
+    ["JSON.ARRINDEX", key, path, encode_json(value)]
   end
 
   # -------------------------------------------------------------------
@@ -184,7 +186,16 @@ defmodule Redis.Commands.JSON do
     if Keyword.get(opts, :raw, false) do
       value
     else
-      JSON.encode!(value)
+      encode_json(value)
+    end
+  end
+
+  defp encode_json(value) do
+    if Code.ensure_loaded?(Jason) do
+      Jason.encode!(value)
+    else
+      raise ArgumentError,
+            "JSON value encoding requires the optional :jason dependency; pass raw: true for pre-encoded values"
     end
   end
 end
