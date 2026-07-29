@@ -7,6 +7,7 @@ defmodule Redis do
 
     * `Redis.Connection` - single connection with full options
     * `Redis.Connection.Pool` - connection pooling
+    * `Redis.ReplicaSet` - primary/replica read routing
     * `Redis.Cluster` - cluster-aware client with slot routing
     * `Redis.Sentinel` - sentinel-aware client with failover
     * `Redis.PubSub` - pub/sub subscriptions

@@ -30,6 +30,7 @@ defmodule Redis.Sentinel.Monitor do
     :sentinel_host,
     :sentinel_port,
     :sentinel_password,
+    :sentinel_username,
     :group,
     :notify,
     :socket,
@@ -53,6 +54,7 @@ defmodule Redis.Sentinel.Monitor do
       sentinel_host: Keyword.fetch!(opts, :sentinel_host),
       sentinel_port: Keyword.fetch!(opts, :sentinel_port),
       sentinel_password: Keyword.get(opts, :sentinel_password),
+      sentinel_username: Keyword.get(opts, :sentinel_username),
       group: Keyword.fetch!(opts, :group),
       notify: Keyword.fetch!(opts, :notify),
       timeout: Keyword.get(opts, :timeout, 5_000)
@@ -122,7 +124,13 @@ defmodule Redis.Sentinel.Monitor do
   defp maybe_auth(_socket, %{sentinel_password: nil}), do: :ok
 
   defp maybe_auth(socket, state) do
-    :gen_tcp.send(socket, RESP2.encode(["AUTH", state.sentinel_password]))
+    arguments =
+      case state.sentinel_username do
+        nil -> ["AUTH", state.sentinel_password]
+        username -> ["AUTH", username, state.sentinel_password]
+      end
+
+    :gen_tcp.send(socket, RESP2.encode(arguments))
 
     case :gen_tcp.recv(socket, 0, state.timeout) do
       {:ok, data} ->

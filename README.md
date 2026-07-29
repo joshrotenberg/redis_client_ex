@@ -165,13 +165,38 @@ Redis.Cluster.transaction(cluster, [
 {:ok, conn} = Redis.Sentinel.start_link(
   sentinels: [{"sentinel1", 26379}, {"sentinel2", 26379}],
   group: "mymaster",
-  role: :primary,
+  read_preference: :prefer_replica,
   password: "secret"
 )
 
-# Transparently resolves master, reconnects on failover
+# Writes use the primary; eligible reads prefer replicas
 Redis.Sentinel.command(conn, ["SET", "key", "value"])
+Redis.Sentinel.command(conn, ["GET", "key"])
 ```
+
+Sentinel refreshes both primary and replica topology and reconnects on
+failover. The existing `role: :primary | :replica` option remains available
+for a fixed-role connection.
+
+## Primary/Replica Routing
+
+For a manually managed replica set, configure the primary and optional
+replicas directly:
+
+```elixir
+{:ok, redis} = Redis.ReplicaSet.start_link(
+  primary: {"redis-primary", 6379},
+  replicas: [{"redis-replica-1", 6379}, {"redis-replica-2", 6379}],
+  read_preference: :prefer_replica
+)
+
+Redis.ReplicaSet.command(redis, ["SET", "key", "value"]) # primary
+Redis.ReplicaSet.command(redis, ["GET", "key"])          # replica, then primary fallback
+```
+
+Omit `:replicas` to discover online replicas from `INFO REPLICATION`.
+Read-only commands are derived from Redis `COMMAND` metadata; unknown
+commands, writes, mixed pipelines, and transactions stay on the primary.
 
 ## Pub/Sub
 
@@ -390,6 +415,7 @@ Redis.Resilience.command(conn, ["GET", "key"])
 - **RESP3 native** with RESP2 fallback for older servers
 - **Cluster** with topology discovery, hash slot routing, MOVED/ASK redirects, cross-slot pipeline splitting, transaction validation
 - **Sentinel** with master resolution, role verification, proactive failover via `+switch-master`
+- **Primary/replica routing** with Sentinel and INFO topology discovery
 - **Pub/Sub** with pattern subscriptions, sharded pub/sub (Redis 7+)
 - **Structured command monitoring** with subscriber filters and cleanup
 - **Phoenix.PubSub adapter** for cross-node broadcasting (optional dep)
