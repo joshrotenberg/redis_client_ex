@@ -11,13 +11,15 @@ RESP3 native. Cluster-aware. Client-side caching. Resilience built in. Zero requ
 
 ## Installation
 
+<!-- x-release-please-start-version -->
 ```elixir
 def deps do
   [
-    {:redis, "~> 0.7.1", hex: :redis_client_ex}
+    {:redis, "~> 0.8.0", hex: :redis_client_ex}
   ]
 end
 ```
+<!-- x-release-please-end -->
 
 The dependency and OTP application are named `:redis`; `hex: :redis_client_ex`
 points Mix at the differently named Hex package. All modules use the `Redis`
