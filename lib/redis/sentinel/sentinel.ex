@@ -47,6 +47,9 @@ defmodule Redis.Sentinel do
       milliseconds for replica routing (default: 30_000; `nil` disables it)
     * `:name` - GenServer name registration
     * `:protocol` - `:resp3` or `:resp2` (default: `:resp3`)
+
+  Command, pipeline, and transaction calls accept `response: :typed`; see
+  `Redis.Response`.
   """
 
   use GenServer
@@ -55,6 +58,7 @@ defmodule Redis.Sentinel do
   alias Redis.Protocol.RESP2
   alias Redis.ReplicaSet
   alias Redis.ReplicaSet.Topology
+  alias Redis.Response
   alias Redis.Sentinel.Monitor
 
   require Logger
@@ -100,21 +104,30 @@ defmodule Redis.Sentinel do
           {:ok, term()} | {:error, term()}
   def command(sentinel, args, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
-    GenServer.call(sentinel, {:command, args}, timeout)
+
+    sentinel
+    |> GenServer.call({:command, args}, timeout)
+    |> Response.decode(args, opts)
   end
 
   @spec pipeline(GenServer.server(), [[String.t()]], keyword()) ::
           {:ok, [term()]} | {:error, term()}
   def pipeline(sentinel, commands, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
-    GenServer.call(sentinel, {:pipeline, commands}, timeout)
+
+    sentinel
+    |> GenServer.call({:pipeline, commands}, timeout)
+    |> Response.decode_many(commands, opts)
   end
 
   @spec transaction(GenServer.server(), [[String.t()]], keyword()) ::
           {:ok, [term()]} | {:error, term()}
   def transaction(sentinel, commands, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
-    GenServer.call(sentinel, {:transaction, commands}, timeout)
+
+    sentinel
+    |> GenServer.call({:transaction, commands}, timeout)
+    |> Response.decode_many(commands, opts)
   end
 
   @doc "Returns info about the current connection."

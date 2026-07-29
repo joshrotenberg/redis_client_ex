@@ -15,7 +15,7 @@ defmodule Redis.Protocol.Coerce do
       #=> MapSet.new(["a", "b", "c"])
   """
 
-  @map_commands ~w(HGETALL CONFIG XRANGE XREVRANGE)
+  @map_commands ~w(HGETALL CONFIG)
   @set_commands ~w(SMEMBERS SDIFF SINTER SUNION)
 
   @doc """

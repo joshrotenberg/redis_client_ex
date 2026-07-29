@@ -106,6 +106,29 @@ end)
 Watches keys, calls your function to read and compute commands, then
 executes in MULTI/EXEC. Automatically retries on conflict (default 3 attempts).
 
+## Typed Responses
+
+Raw RESP values remain the default. Opt into stable, protocol-independent
+values for commands with known reply shapes:
+
+```elixir
+{:ok, %{"name" => "Ada", "role" => "admin"}} =
+  Redis.command(conn, ["HGETALL", "user:1"], response: :typed)
+
+{:ok, [%Redis.Response.StreamEntry{id: id, fields: fields}]} =
+  Redis.command_typed(conn, ["XRANGE", "events", "-", "+"])
+
+{:ok, [hash, clients]} = Redis.pipeline_typed(conn, [
+  ["HGETALL", "user:1"],
+  ["CLIENT", "LIST"]
+])
+```
+
+Typed mode parses `HGETALL`, `CONFIG GET`, set operations, `INFO`,
+`CLIENT LIST`/`CLIENT INFO`, and the range/read stream commands. Unknown
+commands pass through unchanged, including within mixed pipelines. See
+`Redis.Response` for the complete return types.
+
 ## Command Builders
 
 Pure functions that return command lists. Use them with any connection type.
