@@ -13,7 +13,9 @@ defmodule Redis.Connection do
     * `:username` - auth username (Redis 6+ ACL)
     * `:database` - database number to SELECT
     * `:ssl` - enable TLS (default: false)
-    * `:ssl_opts` - SSL options list
+    * `:ssl_opts` - SSL options list. For backwards compatibility, TLS defaults
+      to `verify: :verify_none`; production callers should configure
+      `verify: :verify_peer`, trusted CA certificates, and server-name indication.
     * `:socket` - Unix domain socket path (overrides host/port)
     * `:name` - GenServer name registration
     * `:sync_connect` - connect synchronously in init (default: true)
@@ -314,16 +316,22 @@ defmodule Redis.Connection do
 
       {:ok, args} ->
         data = encode(state.protocol, args)
+        telemetry = telemetry_start(state, [args])
 
         case send_data(state, data) do
           :ok ->
-            callers = :queue.in({from, :single, {args, ctx}}, state.callers)
+            callers = :queue.in({from, :single, {args, ctx, telemetry}}, state.callers)
             {:noreply, %{state | callers: callers}}
 
           {:error, reason} ->
-            {:reply, {:error, %Redis.ConnectionError{reason: reason}}, handle_disconnect(state)}
+            telemetry_exception(telemetry, reason)
+            send_error_reply(state, reason)
         end
     end
+  end
+
+  def handle_call({:pipeline, []}, _from, %{state: :ready} = state) do
+    {:reply, {:ok, []}, state}
   end
 
   def handle_call({:pipeline, commands}, from, %{state: :ready} = state) do
@@ -335,16 +343,21 @@ defmodule Redis.Connection do
 
       {:ok, commands} ->
         data = encode_pipeline(state.protocol, commands)
+        telemetry = telemetry_start(state, commands)
 
         case send_data(state, data) do
           :ok ->
             callers =
-              :queue.in({from, {:pipeline, length(commands)}, {commands, ctx}}, state.callers)
+              :queue.in(
+                {from, {:pipeline, length(commands)}, {commands, ctx, telemetry}},
+                state.callers
+              )
 
             {:noreply, %{state | callers: callers}}
 
           {:error, reason} ->
-            {:reply, {:error, %Redis.ConnectionError{reason: reason}}, handle_disconnect(state)}
+            telemetry_exception(telemetry, reason)
+            send_error_reply(state, reason)
         end
     end
   end
@@ -359,16 +372,21 @@ defmodule Redis.Connection do
       {:ok, commands} ->
         full = [["MULTI"]] ++ commands ++ [["EXEC"]]
         data = encode_pipeline(state.protocol, full)
+        telemetry = telemetry_start(state, commands)
 
         case send_data(state, data) do
           :ok ->
             callers =
-              :queue.in({from, {:transaction, length(full)}, {commands, ctx}}, state.callers)
+              :queue.in(
+                {from, {:transaction, length(full)}, {commands, ctx, telemetry}},
+                state.callers
+              )
 
             {:noreply, %{state | callers: callers}}
 
           {:error, reason} ->
-            {:reply, {:error, %Redis.ConnectionError{reason: reason}}, handle_disconnect(state)}
+            telemetry_exception(telemetry, reason)
+            send_error_reply(state, reason)
         end
     end
   end
@@ -378,28 +396,32 @@ defmodule Redis.Connection do
     # We only expect one response: the OK from CLIENT REPLY ON
     commands = [["CLIENT", "REPLY", "OFF"], args, ["CLIENT", "REPLY", "ON"]]
     data = encode_pipeline(state.protocol, commands)
+    telemetry = telemetry_start(state, [args])
 
     case send_data(state, data) do
       :ok ->
-        callers = :queue.in({from, :noreply, nil}, state.callers)
+        callers = :queue.in({from, :noreply, {nil, nil, telemetry}}, state.callers)
         {:noreply, %{state | callers: callers}}
 
       {:error, reason} ->
-        {:reply, {:error, %Redis.ConnectionError{reason: reason}}, handle_disconnect(state)}
+        telemetry_exception(telemetry, reason)
+        send_error_reply(state, reason)
     end
   end
 
   def handle_call({:noreply_pipeline, commands}, from, %{state: :ready} = state) do
     full = [["CLIENT", "REPLY", "OFF"]] ++ commands ++ [["CLIENT", "REPLY", "ON"]]
     data = encode_pipeline(state.protocol, full)
+    telemetry = telemetry_start(state, commands)
 
     case send_data(state, data) do
       :ok ->
-        callers = :queue.in({from, :noreply, nil}, state.callers)
+        callers = :queue.in({from, :noreply, {nil, nil, telemetry}}, state.callers)
         {:noreply, %{state | callers: callers}}
 
       {:error, reason} ->
-        {:reply, {:error, %Redis.ConnectionError{reason: reason}}, handle_disconnect(state)}
+        telemetry_exception(telemetry, reason)
+        send_error_reply(state, reason)
     end
   end
 
@@ -408,21 +430,23 @@ defmodule Redis.Connection do
   end
 
   @impl true
-  def handle_info({:tcp, _socket, data}, state) do
+  def handle_info({:tcp, socket, data}, %{socket: socket} = state) do
     state = %{state | buffer: state.buffer <> data}
     state = process_buffer(state)
     {:noreply, state}
   end
 
-  def handle_info({:ssl, _socket, data}, state) do
+  def handle_info({:ssl, socket, data}, %{socket: socket} = state) do
     state = %{state | buffer: state.buffer <> data}
     state = process_buffer(state)
     {:noreply, state}
   end
 
-  def handle_info({closed, _socket}, state) when closed in [:tcp_closed, :ssl_closed] do
+  def handle_info({closed, socket}, %{socket: socket} = state)
+      when closed in [:tcp_closed, :ssl_closed] do
     Logger.warning("Redis: connection closed")
     state = fail_pending_callers(state, :closed)
+    telemetry_disconnect(state, :closed)
 
     if state.exit_on_disconnection do
       {:stop, :disconnected, handle_disconnect(state)}
@@ -431,9 +455,11 @@ defmodule Redis.Connection do
     end
   end
 
-  def handle_info({error, _socket, reason}, state) when error in [:tcp_error, :ssl_error] do
+  def handle_info({error, socket, reason}, %{socket: socket} = state)
+      when error in [:tcp_error, :ssl_error] do
     Logger.warning("Redis: connection error: #{inspect(reason)}")
     state = fail_pending_callers(state, reason)
+    telemetry_disconnect(state, reason)
 
     if state.exit_on_disconnection do
       {:stop, {:connection_error, reason}, handle_disconnect(state)}
@@ -441,6 +467,8 @@ defmodule Redis.Connection do
       {:noreply, schedule_reconnect(handle_disconnect(state))}
     end
   end
+
+  def handle_info(:connect, %{state: :ready} = state), do: {:noreply, state}
 
   def handle_info(:connect, state) do
     case connect(state) do
@@ -452,6 +480,13 @@ defmodule Redis.Connection do
         {:noreply, schedule_reconnect(state)}
     end
   end
+
+  def handle_info({kind, _stale_socket, _data}, state)
+      when kind in [:tcp, :ssl, :tcp_error, :ssl_error],
+      do: {:noreply, state}
+
+  def handle_info({kind, _stale_socket}, state) when kind in [:tcp_closed, :ssl_closed],
+    do: {:noreply, state}
 
   def handle_info({:EXIT, _port, _reason}, state) do
     {:noreply, state}
@@ -475,29 +510,63 @@ defmodule Redis.Connection do
   # -------------------------------------------------------------------
 
   defp connect(%{unix_socket: path} = state) when is_binary(path) do
+    started_at = System.monotonic_time()
     tcp_opts = [:binary, {:active, false}, {:packet, :raw}]
 
-    with {:ok, socket} <-
-           :gen_tcp.connect({:local, String.to_charlist(path)}, 0, tcp_opts, state.timeout),
-         {:ok, state} <- handshake(%{state | socket: socket, state: :ready, buffer: <<>>}) do
-      set_active(state, true)
-      Logger.debug("Redis: connected to #{path}")
-      {:ok, %{state | backoff_current: state.backoff_initial}}
+    case :gen_tcp.connect({:local, String.to_charlist(path)}, 0, tcp_opts, state.timeout) do
+      {:ok, socket} ->
+        connected_state = %{state | socket: socket, state: :ready, buffer: <<>>}
+
+        case handshake(connected_state) do
+          {:ok, ready_state} ->
+            set_active(ready_state, true)
+            Logger.debug("Redis: connected to #{path}")
+            telemetry_connect(ready_state, started_at)
+            {:ok, %{ready_state | backoff_current: ready_state.backoff_initial}}
+
+          {:error, reason} ->
+            :gen_tcp.close(socket)
+            {:error, reason}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
   defp connect(state) do
+    started_at = System.monotonic_time()
     host = String.to_charlist(state.host)
     tcp_opts = [:binary, active: false, packet: :raw, nodelay: true]
 
-    with {:ok, socket} <- :gen_tcp.connect(host, state.port, tcp_opts, state.timeout),
-         {:ok, socket, state} <- maybe_upgrade_ssl(socket, state),
-         {:ok, state} <- handshake(%{state | socket: socket, state: :ready, buffer: <<>>}) do
-      set_active(state, true)
-      Logger.debug("Redis: connected to #{state.host}:#{state.port}")
-      {:ok, %{state | backoff_current: state.backoff_initial}}
-    else
+    case :gen_tcp.connect(host, state.port, tcp_opts, state.timeout) do
+      {:ok, tcp_socket} ->
+        connect_socket(tcp_socket, state, started_at)
+
       {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp connect_socket(tcp_socket, state, started_at) do
+    case maybe_upgrade_ssl(tcp_socket, state) do
+      {:ok, socket, upgraded_state} ->
+        connected_state = %{upgraded_state | socket: socket, state: :ready, buffer: <<>>}
+
+        case handshake(connected_state) do
+          {:ok, ready_state} ->
+            set_active(ready_state, true)
+            Logger.debug("Redis: connected to #{ready_state.host}:#{ready_state.port}")
+            telemetry_connect(ready_state, started_at)
+            {:ok, %{ready_state | backoff_current: ready_state.backoff_initial}}
+
+          {:error, reason} ->
+            close_socket(connected_state)
+            {:error, reason}
+        end
+
+      {:error, reason} ->
+        :gen_tcp.close(tcp_socket)
         {:error, reason}
     end
   end
@@ -505,7 +574,7 @@ defmodule Redis.Connection do
   defp maybe_upgrade_ssl(socket, %{ssl: false} = state), do: {:ok, socket, state}
 
   defp maybe_upgrade_ssl(socket, %{ssl: true} = state) do
-    ssl_opts = [verify: :verify_none] ++ state.ssl_opts
+    ssl_opts = Keyword.put_new(state.ssl_opts, :verify, :verify_none)
 
     case :ssl.connect(socket, ssl_opts, state.timeout) do
       {:ok, ssl_socket} -> {:ok, ssl_socket, %{state | socket: ssl_socket}}
@@ -697,6 +766,9 @@ defmodule Redis.Connection do
   defp send_data(%{ssl: true, socket: socket}, data), do: :ssl.send(socket, data)
   defp send_data(%{socket: socket}, data), do: :gen_tcp.send(socket, data)
 
+  defp close_socket(%{ssl: true, socket: socket}), do: :ssl.close(socket)
+  defp close_socket(%{socket: socket}), do: :gen_tcp.close(socket)
+
   defp set_active(%{ssl: true, socket: socket}, active), do: :ssl.setopts(socket, active: active)
   defp set_active(%{socket: socket}, active), do: :inet.setopts(socket, active: active)
 
@@ -735,6 +807,7 @@ defmodule Redis.Connection do
       {:ok, response, rest} ->
         result = wrap_response(response)
         result = run_after_hooks(state, :command, hook_meta, result)
+        finish_telemetry(hook_meta, result)
         GenServer.reply(from, result)
         advance_and_continue(state, rest)
 
@@ -748,6 +821,7 @@ defmodule Redis.Connection do
       {:ok, responses, rest} ->
         result = {:ok, responses}
         result = run_after_hooks(state, :pipeline, hook_meta, result)
+        finish_telemetry(hook_meta, result)
         GenServer.reply(from, result)
         advance_and_continue(state, rest)
 
@@ -761,6 +835,7 @@ defmodule Redis.Connection do
       {:ok, responses, rest} ->
         result = transaction_reply(responses)
         result = run_after_hooks(state, :pipeline, hook_meta, result)
+        finish_telemetry(hook_meta, result)
         GenServer.reply(from, result)
         advance_and_continue(state, rest)
 
@@ -769,10 +844,11 @@ defmodule Redis.Connection do
     end
   end
 
-  defp process_caller(state, from, :noreply, _hook_meta) do
+  defp process_caller(state, from, :noreply, hook_meta) do
     # Expect exactly one response: the OK from CLIENT REPLY ON
     case decode(state.protocol, state.buffer) do
       {:ok, _response, rest} ->
+        finish_telemetry(hook_meta, :ok)
         GenServer.reply(from, :ok)
         advance_and_continue(state, rest)
 
@@ -783,11 +859,11 @@ defmodule Redis.Connection do
 
   defp run_after_hooks(%{hooks: []}, _type, _hook_meta, result), do: result
 
-  defp run_after_hooks(%{hooks: hooks}, :command, {args, ctx}, result) do
+  defp run_after_hooks(%{hooks: hooks}, :command, {args, ctx, _telemetry}, result) do
     Redis.Hook.run_after_command(hooks, args, result, ctx)
   end
 
-  defp run_after_hooks(%{hooks: hooks}, :pipeline, {commands, ctx}, result) do
+  defp run_after_hooks(%{hooks: hooks}, :pipeline, {commands, ctx, _telemetry}, result) do
     Redis.Hook.run_after_pipeline(hooks, commands, result, ctx)
   end
 
@@ -868,6 +944,19 @@ defmodule Redis.Connection do
     %{state | socket: nil, state: :disconnected, buffer: <<>>}
   end
 
+  defp send_error_reply(state, reason) do
+    error = {:error, %Redis.ConnectionError{reason: reason}}
+    state = fail_pending_callers(state, reason)
+    telemetry_disconnect(state, reason)
+    state = handle_disconnect(state)
+
+    if state.exit_on_disconnection do
+      {:stop, {:connection_error, reason}, error, state}
+    else
+      {:reply, error, schedule_reconnect(state)}
+    end
+  end
+
   defp schedule_reconnect(state) do
     delay = state.backoff_current
     Process.send_after(self(), :connect, delay)
@@ -880,8 +969,81 @@ defmodule Redis.Connection do
 
     state.callers
     |> :queue.to_list()
-    |> Enum.each(fn {from, _type, _hook_meta} -> GenServer.reply(from, error) end)
+    |> Enum.each(fn {from, _type, hook_meta} ->
+      finish_telemetry_exception(hook_meta, reason)
+      GenServer.reply(from, error)
+    end)
 
     %{state | callers: :queue.new()}
+  end
+
+  # -------------------------------------------------------------------
+  # Telemetry
+  # -------------------------------------------------------------------
+
+  defp telemetry_start(state, commands) do
+    metadata = %{
+      commands: commands,
+      host: state.host,
+      port: state.port,
+      database: state.database || 0,
+      operation_id: make_ref()
+    }
+
+    Redis.Telemetry.execute(
+      [:redis_ex, :pipeline, :start],
+      %{system_time: System.system_time()},
+      metadata
+    )
+
+    {System.monotonic_time(), metadata}
+  end
+
+  defp finish_telemetry({_subject, _ctx, telemetry}, result) do
+    {started_at, metadata} = telemetry
+    duration = System.monotonic_time() - started_at
+
+    Redis.Telemetry.execute(
+      [:redis_ex, :pipeline, :stop],
+      %{duration: duration},
+      Map.put(metadata, :result, result)
+    )
+  end
+
+  defp finish_telemetry(nil, _result), do: :ok
+
+  defp telemetry_exception({started_at, metadata}, reason) do
+    duration = System.monotonic_time() - started_at
+
+    Redis.Telemetry.execute(
+      [:redis_ex, :pipeline, :exception],
+      %{duration: duration},
+      Map.merge(metadata, %{kind: :error, reason: reason})
+    )
+  end
+
+  defp finish_telemetry_exception({_subject, _ctx, telemetry}, reason),
+    do: telemetry_exception(telemetry, reason)
+
+  defp finish_telemetry_exception(nil, _reason), do: :ok
+
+  defp telemetry_connect(state, started_at) do
+    Redis.Telemetry.execute(
+      [:redis_ex, :connection, :connect],
+      %{duration: System.monotonic_time() - started_at},
+      connection_metadata(state)
+    )
+  end
+
+  defp telemetry_disconnect(state, reason) do
+    Redis.Telemetry.execute(
+      [:redis_ex, :connection, :disconnect],
+      %{},
+      Map.put(connection_metadata(state), :reason, reason)
+    )
+  end
+
+  defp connection_metadata(state) do
+    %{host: state.host, port: state.port, socket: state.unix_socket}
   end
 end

@@ -58,7 +58,7 @@ defmodule Redis.Protocol.RESP2 do
         len = String.to_integer(len_str)
 
         case rest do
-          <<blob::binary-size(len), "\r\n", rest2::binary>> ->
+          <<blob::binary-size(^len), "\r\n", rest2::binary>> ->
             {:ok, blob, rest2}
 
           _ ->

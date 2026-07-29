@@ -201,6 +201,32 @@ defmodule Redis.Cluster.TopologyTest do
       assert {200, 300, "127.0.0.1", 7000} in parsed
     end
 
+    test "prefers the healthy primary during failover convergence" do
+      shards = [
+        %{
+          "slots" => [0, 5_460],
+          "nodes" => [
+            %{
+              "ip" => "127.0.0.1",
+              "port" => 7000,
+              "role" => "master",
+              "health" => "fail"
+            },
+            %{
+              "ip" => "127.0.0.1",
+              "endpoint" => "redis-primary.internal",
+              "port" => 7003,
+              "role" => "master",
+              "health" => "online"
+            }
+          ]
+        }
+      ]
+
+      assert [{0, 5_460, "redis-primary.internal", 7003}] =
+               Topology.parse_shards(shards)
+    end
+
     test "normalizes empty host" do
       shards = [
         %{

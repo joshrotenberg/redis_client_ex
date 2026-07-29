@@ -21,7 +21,6 @@ defmodule Redis.IntegrationTest do
       assert {:ok, "PONG"} = Connection.command(conn, ["PING"])
 
       # Kill the server
-      srv_info = RedisServerWrapper.Server.info(srv)
       RedisServerWrapper.Server.stop(srv)
       Process.sleep(500)
 

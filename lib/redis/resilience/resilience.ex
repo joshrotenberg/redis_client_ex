@@ -50,8 +50,6 @@ defmodule Redis.Resilience do
 
   alias Redis.Connection
 
-  require Logger
-
   defstruct [:conn, :pipeline, :pipeline_name, :layers]
 
   # -------------------------------------------------------------------

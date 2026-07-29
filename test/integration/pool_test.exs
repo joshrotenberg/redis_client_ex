@@ -79,6 +79,39 @@ defmodule Redis.Connection.PoolTest do
 
       Pool.stop(pool)
     end
+
+    test "rejects invalid pool options" do
+      Process.flag(:trap_exit, true)
+
+      assert {:error, {:invalid_pool_size, 0}} = Pool.start_link(pool_size: 0, port: 6398)
+
+      assert {:error, {:invalid_strategy, :least_loaded}} =
+               Pool.start_link(pool_size: 1, strategy: :least_loaded, port: 6398)
+    end
+
+    test "retries a failed replacement until the pool recovers" do
+      {:ok, server} = RedisServerWrapper.Server.start(port: 6466)
+
+      {:ok, pool} =
+        Pool.start_link(pool_size: 1, port: 6466, exit_on_disconnection: true, timeout: 200)
+
+      assert %{active: 1} = Pool.info(pool)
+
+      RedisServerWrapper.Server.stop(server)
+      wait_until(fn -> Pool.info(pool).active == 0 end)
+      assert {:error, :no_connections} = Pool.command(pool, ["PING"])
+
+      restarted = start_server_when_available(6466)
+
+      on_exit(fn ->
+        if Process.alive?(restarted), do: RedisServerWrapper.Server.stop(restarted)
+      end)
+
+      wait_until(fn -> Pool.info(pool).active == 1 end, 4_000)
+
+      assert {:ok, "PONG"} = Pool.command(pool, ["PING"])
+      Pool.stop(pool)
+    end
   end
 
   describe "concurrent usage" do
@@ -119,6 +152,48 @@ defmodule Redis.Connection.PoolTest do
                GenServer.call(pool, {:pipeline, [["SET", "x", "1"], ["PING"]], []})
 
       Pool.stop(pool)
+    end
+  end
+
+  defp start_server_when_available(port, timeout \\ 4_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_start_server_when_available(port, deadline)
+  end
+
+  defp do_start_server_when_available(port, deadline) do
+    case RedisServerWrapper.Server.start(port: port) do
+      {:ok, server} ->
+        server
+
+      {:error, {:port_in_use, ^port, :eaddrinuse}} ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          flunk("Redis port #{port} was not released before timeout")
+        else
+          Process.sleep(50)
+          do_start_server_when_available(port, deadline)
+        end
+
+      {:error, reason} ->
+        flunk("failed to restart Redis on port #{port}: #{inspect(reason)}")
+    end
+  end
+
+  defp wait_until(fun, timeout \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_until(fun, deadline)
+  end
+
+  defp do_wait_until(fun, deadline) do
+    cond do
+      fun.() ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("condition was not met before timeout")
+
+      true ->
+        Process.sleep(25)
+        do_wait_until(fun, deadline)
     end
   end
 end

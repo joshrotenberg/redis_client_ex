@@ -60,6 +60,8 @@ defmodule Redis.Search do
     * `:coerce` -- auto-coerce numeric strings (default: true)
   """
 
+  @compile {:no_warn_undefined, Jason}
+
   alias Redis.Commands.Search, as: Cmd
   alias Redis.Connection
 

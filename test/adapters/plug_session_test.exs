@@ -65,6 +65,15 @@ defmodule Redis.PlugSessionTest do
 
       assert {"my_sid", ^data} = Redis.PlugSession.get(nil, "my_sid", opts)
     end
+
+    test "rejects external terms that would create atoms", %{conn: conn, opts: opts} do
+      atom_name = "redis_client_ex_untrusted_#{System.unique_integer([:positive])}"
+      unsafe_term = <<131, 118, byte_size(atom_name)::16, atom_name::binary>>
+
+      Connection.command(conn, ["SET", "test:session:unsafe", unsafe_term, "EX", "60"])
+
+      assert {"unsafe", %{}} = Redis.PlugSession.get(nil, "unsafe", opts)
+    end
   end
 
   describe "put/4" do

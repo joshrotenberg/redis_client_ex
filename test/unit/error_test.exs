@@ -3,7 +3,7 @@ defmodule Redis.ErrorTest do
 
   describe "Redis.Error" do
     test "is an exception" do
-      assert Exception.exception?(Redis.Error.exception(message: "ERR test"))
+      assert is_exception(Redis.Error.exception(message: "ERR test"))
     end
 
     test "has message field" do
@@ -31,7 +31,7 @@ defmodule Redis.ErrorTest do
 
   describe "Redis.ConnectionError" do
     test "is an exception" do
-      assert Exception.exception?(Redis.ConnectionError.exception(reason: :econnrefused))
+      assert is_exception(Redis.ConnectionError.exception(reason: :econnrefused))
     end
 
     test "has reason field" do

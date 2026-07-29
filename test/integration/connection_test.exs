@@ -180,4 +180,46 @@ defmodule Redis.ConnectionTest do
       assert results == [1, 2, 3]
     end
   end
+
+  describe "telemetry" do
+    test "emits connection and command lifecycle events" do
+      handler_id = "connection-telemetry-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach_many(
+          handler_id,
+          [
+            [:redis_ex, :connection, :connect],
+            [:redis_ex, :pipeline, :start],
+            [:redis_ex, :pipeline, :stop]
+          ],
+          &__MODULE__.forward_telemetry/4,
+          self()
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      {:ok, conn} = Connection.start_link(port: 6398)
+      assert {:ok, "PONG"} = Connection.command(conn, ["PING"])
+
+      assert_receive {:redis_telemetry, [:redis_ex, :connection, :connect], %{duration: duration},
+                      %{host: "127.0.0.1", port: 6398}}
+
+      assert duration >= 0
+
+      assert_receive {:redis_telemetry, [:redis_ex, :pipeline, :start], %{system_time: _},
+                      %{commands: [["PING"]]}}
+
+      assert_receive {:redis_telemetry, [:redis_ex, :pipeline, :stop], %{duration: duration},
+                      %{commands: [["PING"]], result: {:ok, "PONG"}}}
+
+      assert duration >= 0
+      Connection.stop(conn)
+    end
+  end
+
+  @doc false
+  def forward_telemetry(event, measurements, metadata, pid) do
+    send(pid, {:redis_telemetry, event, measurements, metadata})
+  end
 end

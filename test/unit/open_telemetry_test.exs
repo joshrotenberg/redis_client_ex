@@ -128,29 +128,66 @@ defmodule Redis.OpenTelemetryTest do
     end
 
     test "creates a span for a single command" do
+      operation_id = make_ref()
+      span_key = {{Redis.OpenTelemetry, :span}, operation_id}
+
       Redis.Telemetry.execute(
         [:redis_ex, :pipeline, :start],
         %{system_time: System.system_time()},
-        %{commands: [["GET", "mykey"]]}
+        %{operation_id: operation_id, commands: [["GET", "mykey"]]}
       )
+
+      refute is_nil(Process.get(span_key))
 
       Redis.Telemetry.execute(
         [:redis_ex, :pipeline, :stop],
         %{duration: 1000},
-        %{commands: [["GET", "mykey"]]}
+        %{operation_id: operation_id, commands: [["GET", "mykey"]]}
       )
 
-      # Give the exporter a moment to process
-      Process.sleep(100)
+      assert is_nil(Process.get(span_key))
+    end
 
-      # If we receive a span, great; if not, the handlers at least didn't crash
-      receive do
-        {:span, span} ->
-          # Verify span has expected structure
-          assert is_tuple(span)
-      after
-        500 -> :ok
-      end
+    test "correlates overlapping operations with their own spans" do
+      first = make_ref()
+      second = make_ref()
+      first_key = {{Redis.OpenTelemetry, :span}, first}
+      second_key = {{Redis.OpenTelemetry, :span}, second}
+
+      Redis.Telemetry.execute(
+        [:redis_ex, :pipeline, :start],
+        %{system_time: System.system_time()},
+        %{operation_id: first, commands: [["GET", "first"]]}
+      )
+
+      Redis.Telemetry.execute(
+        [:redis_ex, :pipeline, :start],
+        %{system_time: System.system_time()},
+        %{operation_id: second, commands: [["GET", "second"]]}
+      )
+
+      first_span = Process.get(first_key)
+      second_span = Process.get(second_key)
+      refute is_nil(first_span)
+      refute is_nil(second_span)
+      refute first_span == second_span
+
+      Redis.Telemetry.execute(
+        [:redis_ex, :pipeline, :stop],
+        %{duration: 1000},
+        %{operation_id: first, commands: [["GET", "first"]]}
+      )
+
+      assert is_nil(Process.get(first_key))
+      refute is_nil(Process.get(second_key))
+
+      Redis.Telemetry.execute(
+        [:redis_ex, :pipeline, :exception],
+        %{duration: 1000},
+        %{operation_id: second, commands: [["GET", "second"]], reason: :closed}
+      )
+
+      assert is_nil(Process.get(second_key))
     end
   end
 end
