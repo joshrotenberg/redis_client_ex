@@ -2,6 +2,11 @@ defmodule Redis do
   @moduledoc """
   Modern, full-featured Redis client for Elixir.
 
+  Start with the
+  [complete guide](https://redis-client-ex.hexdocs.pm/readme.html) for
+  installation, topology selection, optional dependencies, and end-to-end
+  examples.
+
   This module provides the top-level API for single-connection usage.
   For other deployment modes and features, see:
 
@@ -21,7 +26,8 @@ defmodule Redis do
     * `Redis.PlugSession` - Plug session store
     * `Redis.Resilience` - composed retry, circuit breaker, bulkhead
     * `Redis.Script` - Lua script execution with SHA caching
-    * `Redis.Commands` - 21 command builder modules
+    * [Command builders](https://redis-client-ex.hexdocs.pm/api-reference.html) -
+      23 modules covering core Redis and Redis Stack commands
 
   ## Quick Start
 

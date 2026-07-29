@@ -4,8 +4,9 @@ if Code.ensure_loaded?(OpenTelemetry) do
     Optional OpenTelemetry integration for Redis.
 
     Creates OTel spans for Redis commands by attaching to the existing
-    `:telemetry` events emitted by `Redis.Telemetry`. Requires the
-    `:opentelemetry_api` dependency.
+    `:telemetry` events emitted by `Redis.Telemetry`. Requires the optional
+    `:telemetry` and `:opentelemetry_api` dependencies, plus an OpenTelemetry
+    SDK and exporter configured by the application.
 
     ## Setup
 
