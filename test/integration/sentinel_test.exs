@@ -98,5 +98,58 @@ defmodule Redis.SentinelTest do
 
       Sentinel.stop(conn)
     end
+
+    test "routes eligible reads to replicas and writes to the primary" do
+      {:ok, conn} =
+        Sentinel.start_link(
+          sentinels: [{"127.0.0.1", 26_400}, {"127.0.0.1", 26_401}],
+          group: "mymaster",
+          read_preference: :replica,
+          read_only_commands: ["ROLE"],
+          topology_refresh_interval: nil
+        )
+
+      eventually(fn ->
+        Sentinel.refresh(conn) == :ok and Sentinel.info(conn).connected_replicas != []
+      end)
+
+      assert {:ok, [replica_role | _]} = Sentinel.command(conn, ["ROLE"])
+      assert replica_role in ["slave", "replica"]
+
+      key = "sentinel:replica-routing:#{System.unique_integer([:positive])}"
+      assert {:ok, "OK"} = Sentinel.command(conn, ["SET", key, "value"])
+      eventually(fn -> Sentinel.command(conn, ["GET", key]) == {:ok, "value"} end)
+
+      info = Sentinel.info(conn)
+      assert info.read_preference == :replica
+      assert {"127.0.0.1", 6501} in info.replica_addrs
+      assert {"127.0.0.1", 6501} in info.connected_replicas
+
+      Sentinel.stop(conn)
+    end
+
+    test "rejects a fixed replica role combined with read preference routing" do
+      Process.flag(:trap_exit, true)
+
+      assert {:error, :replica_role_conflicts_with_read_preference} =
+               Sentinel.start_link(
+                 sentinels: [{"127.0.0.1", 26_400}],
+                 group: "mymaster",
+                 role: :replica,
+                 read_preference: :prefer_replica
+               )
+    end
+  end
+
+  defp eventually(predicate, attempts \\ 200)
+  defp eventually(_predicate, 0), do: flunk("condition did not become true")
+
+  defp eventually(predicate, attempts) do
+    if predicate.() do
+      :ok
+    else
+      Process.sleep(50)
+      eventually(predicate, attempts - 1)
+    end
   end
 end
