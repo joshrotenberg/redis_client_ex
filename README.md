@@ -1,9 +1,9 @@
 # Redis
 
-[![CI](https://github.com/joshrotenberg/redis_ex/actions/workflows/ci.yml/badge.svg)](https://github.com/joshrotenberg/redis_ex/actions/workflows/ci.yml)
+[![CI](https://github.com/joshrotenberg/redis_client_ex/actions/workflows/ci.yml/badge.svg)](https://github.com/joshrotenberg/redis_client_ex/actions/workflows/ci.yml)
 [![Hex.pm](https://img.shields.io/hexpm/v/redis_client_ex.svg)](https://hex.pm/packages/redis_client_ex)
 [![Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/redis_client_ex)
-[![License](https://img.shields.io/hexpm/l/redis_client_ex.svg)](LICENSE)
+[![License](https://img.shields.io/hexpm/l/redis_client_ex.svg)](https://github.com/joshrotenberg/redis_client_ex/blob/main/LICENSE)
 
 Modern, full-featured Redis client for Elixir built on OTP.
 
@@ -14,12 +14,14 @@ RESP3 native. Cluster-aware. Client-side caching. Resilience built in. Zero requ
 ```elixir
 def deps do
   [
-    {:redis_client_ex, "~> 0.6"}
+    {:redis, "~> 0.7.1", hex: :redis_client_ex}
   ]
 end
 ```
 
-The Hex package is `redis_client_ex`, but the application and all modules use the `Redis` namespace.
+The dependency and OTP application are named `:redis`; `hex: :redis_client_ex`
+points Mix at the differently named Hex package. All modules use the `Redis`
+namespace.
 
 ## Connecting
 
@@ -33,9 +35,20 @@ The Hex package is `redis_client_ex`, but the application and all modules use th
 # With authentication
 {:ok, conn} = Redis.start_link(host: "myhost", password: "secret")
 
-# TLS
-{:ok, conn} = Redis.start_link(host: "myhost", ssl: true)
+# TLS with certificate and hostname verification
+{:ok, conn} = Redis.start_link(
+  host: "myhost",
+  ssl: true,
+  ssl_opts: [
+    verify: :verify_peer,
+    cacerts: :public_key.cacerts_get(),
+    server_name_indication: ~c"myhost"
+  ]
+)
 ```
+
+For backwards compatibility, `ssl: true` without `ssl_opts` uses
+`verify: :verify_none`. Configure peer verification for production connections.
 
 ## Supervision
 

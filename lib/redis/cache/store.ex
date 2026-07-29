@@ -40,7 +40,7 @@ defmodule Redis.Cache.Store do
           stores: non_neg_integer()
         }
 
-  @doc "Initializes the store from options. Implements `Redis.Cache.Backend.init/1`."
+  @doc "Initializes the store from backend options."
   @impl true
   @spec init(keyword()) :: {:ok, t()}
   def init(opts) do

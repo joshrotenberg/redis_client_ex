@@ -407,7 +407,8 @@ defmodule Redis.Sentinel do
           case role_str do
             "master" -> :primary
             "slave" -> :replica
-            other -> String.to_atom(other)
+            "replica" -> :replica
+            _other -> :unknown
           end
 
         if actual == expected_role, do: :ok, else: {:error, :wrong_role}

@@ -78,15 +78,20 @@ defmodule Redis.ClusterFailoverTest do
       assert {:ok, "after"} = Cluster.command(cluster, ["GET", "{failover}.key"])
     end
 
-    test "client recovers after master kill + forced failover", %{
+    test "client recovers after master kill and failover", %{
       cluster: cluster,
       cluster_srv: cluster_srv
     } do
-      assert {:ok, "OK"} = Cluster.command(cluster, ["SET", "{kill}.key", "before"])
+      # SET and WAIT must use the same node connection: WAIT only observes
+      # writes issued on its own connection.
+      {:ok, ["OK", replicas]} =
+        Cluster.pipeline(cluster, [
+          ["SET", "{kill}.key", "before"],
+          ["WAIT", "1", "5000"]
+        ])
 
-      # Ensure replication
-      {:ok, replicas} = Cluster.command(cluster, ["WAIT", "1", "5000"])
       IO.puts("WAIT confirmed by #{inspect(replicas)} replica(s)")
+      assert replicas >= 1
 
       # Kill master
       {:ok, killed} = Chaos.kill_master(cluster_srv, "{kill}.key")
@@ -96,11 +101,20 @@ defmodule Redis.ClusterFailoverTest do
       # Wait for failure detection
       Process.sleep(8000)
 
-      # Force-promote the replica
-      replica = find_replica_of_dead(cluster_srv, killed, killed_info.port)
-      replica_info = Server.info(replica)
-      IO.puts("Promoting replica on port #{replica_info.port}")
-      {:ok, "OK"} = Chaos.trigger_failover(replica)
+      # Redis may already have promoted the replica during failure detection.
+      # Otherwise, explicitly trigger promotion on the remaining replica.
+      failover_target =
+        find_failover_target(cluster_srv, killed, killed_info.port, "{kill}.key")
+
+      target_info = Server.info(failover_target)
+
+      if server_role(failover_target) == "master" do
+        IO.puts("Replica on port #{target_info.port} was promoted automatically")
+      else
+        IO.puts("Promoting replica on port #{target_info.port}")
+        {:ok, "OK"} = Chaos.trigger_failover(failover_target)
+      end
+
       Process.sleep(5000)
 
       # Refresh and verify
@@ -108,7 +122,7 @@ defmodule Redis.ClusterFailoverTest do
       Process.sleep(2000)
 
       result = Cluster.command(cluster, ["GET", "{kill}.key"])
-      IO.puts("GET after forced failover: #{inspect(result)}")
+      IO.puts("GET after failover: #{inspect(result)}")
       assert {:ok, "before"} = result
     end
 
@@ -229,10 +243,53 @@ defmodule Redis.ClusterFailoverTest do
     {String.to_integer(port_str), id}
   end
 
-  # Find the replica of a dead master (master already killed)
-  defp find_replica_of_dead(cluster_srv, killed, dead_port) do
+  # Find either the replica of a dead master or that replica after Redis has
+  # already promoted it automatically.
+  defp find_failover_target(cluster_srv, killed, dead_port, key) do
     surviving = RedisServerWrapper.Cluster.nodes(cluster_srv) |> Enum.reject(&(&1 == killed))
+    slot = Router.slot(key)
 
+    case find_live_master_for_slot(surviving, slot, dead_port) do
+      nil -> find_replica_of_dead(surviving, dead_port)
+      promoted -> promoted
+    end
+  end
+
+  defp find_live_master_for_slot(nodes, slot, dead_port) do
+    port =
+      nodes
+      |> Enum.map(&Server.run(&1, ["CLUSTER", "NODES"]))
+      |> Enum.find_value(fn
+        {:ok, output} -> find_live_master_port(output, slot, dead_port)
+        _ -> nil
+      end)
+
+    Enum.find(nodes, &(Server.info(&1).port == port))
+  end
+
+  defp find_live_master_port(output, slot, dead_port) do
+    output
+    |> String.split("\n", trim: true)
+    |> Enum.find_value(&live_master_port(&1, slot, dead_port))
+  end
+
+  defp live_master_port(line, slot, dead_port) do
+    parts = String.split(line)
+    flags = Enum.at(parts, 2, "")
+
+    with true <- length(parts) >= 9,
+         true <- String.contains?(flags, "master"),
+         false <- String.contains?(flags, "fail"),
+         {port, _id} <- parse_node_addr(parts),
+         true <- port != dead_port,
+         true <- slot_in_ranges?(slot, Enum.drop(parts, 8)) do
+      port
+    else
+      _ -> nil
+    end
+  end
+
+  defp find_replica_of_dead(surviving, dead_port) do
     # Query CLUSTER NODES from any reachable surviving node
     cn = get_cluster_nodes_from_any(surviving)
 
@@ -262,6 +319,11 @@ defmodule Redis.ClusterFailoverTest do
         :exit, _ -> false
       end
     end) || raise "Could not find replica of dead master on port #{dead_port}"
+  end
+
+  defp server_role(server) do
+    {:ok, output} = Server.run(server, ["ROLE"])
+    output |> String.split("\n") |> hd()
   end
 
   defp get_cluster_nodes_from_any(nodes) do

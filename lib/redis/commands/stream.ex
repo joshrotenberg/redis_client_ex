@@ -12,6 +12,21 @@ defmodule Redis.Commands.Stream do
   a command, pass the result to `Redis.command/2`; to batch several
   commands in a single round trip, use `Redis.pipeline/2`.
 
+  ## Response shapes
+
+  These functions build commands; they do not normalize Redis replies. Connections
+  negotiate RESP3 by default and fall back to RESP2 when needed. In particular,
+  `XREAD` and `XREADGROUP` return a map keyed by stream under RESP3:
+
+      {:ok, %{"events" => [["1234567890123-0", ["type", "click"]]]}}
+
+  The same reply under RESP2 is a list of stream/entries pairs:
+
+      {:ok, [["events", [["1234567890123-0", ["type", "click"]]]]]}
+
+  Both protocols return `nil` when no stream can be served. `XRANGE` and
+  `XREVRANGE` return a list of entries under both protocols.
+
   ## Examples
 
   Appending entries and reading them back:
@@ -20,7 +35,7 @@ defmodule Redis.Commands.Stream do
       {:ok, "1234567890123-0"}
 
       iex> Redis.command(conn, Redis.Commands.Stream.xread(streams: [{"events", "0"}], count: 10))
-      {:ok, [["events", [["1234567890123-0", ["type", "click", "url", "/home"]]]]]}
+      {:ok, %{"events" => [["1234567890123-0", ["type", "click", "url", "/home"]]]}}
 
   Consumer group pattern -- read, process, acknowledge:
 
@@ -28,7 +43,7 @@ defmodule Redis.Commands.Stream do
       {:ok, "OK"}
 
       iex> Redis.command(conn, Redis.Commands.Stream.xreadgroup("workers", "worker-1", streams: [{"events", ">"}], count: 5))
-      {:ok, [["events", [["1234567890123-0", ["type", "click", "url", "/home"]]]]]}
+      {:ok, %{"events" => [["1234567890123-0", ["type", "click", "url", "/home"]]]}}
 
       iex> Redis.command(conn, Redis.Commands.Stream.xack("events", "workers", ["1234567890123-0"]))
       {:ok, 1}
@@ -72,6 +87,9 @@ defmodule Redis.Commands.Stream do
       Use `"0"` to read from the beginning or `"$"` to read only new entries.
     * `:count` - maximum number of entries to return per stream
     * `:block` - block for up to this many milliseconds waiting for new data
+
+  Execution returns a stream-keyed map under RESP3 and stream/entries pairs under
+  RESP2. See "Response shapes" in the module documentation.
   """
   @spec xread(keyword()) :: [String.t()]
   def xread(opts) do
@@ -151,6 +169,9 @@ defmodule Redis.Commands.Stream do
     * `:count` - maximum number of entries to return per stream
     * `:block` - block for up to this many milliseconds waiting for new data
     * `:noack` - do not require acknowledgement for delivered entries
+
+  Execution returns a stream-keyed map under RESP3 and stream/entries pairs under
+  RESP2. See "Response shapes" in the module documentation.
   """
   @spec xreadgroup(String.t(), String.t(), keyword()) :: [String.t()]
   def xreadgroup(group, consumer, opts) do

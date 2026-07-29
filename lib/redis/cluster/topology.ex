@@ -143,17 +143,12 @@ defmodule Redis.Cluster.Topology do
   defp parse_shard_with_replicas(_), do: []
 
   defp find_master(nodes) do
-    Enum.find_value(nodes, fn
-      %{"role" => "master", "ip" => ip, "port" => port} when is_integer(port) ->
-        host = Map.get(%{"ip" => ip}, "endpoint", ip) |> then(&(&1 || ip))
-        {host, port}
+    masters = Enum.filter(nodes, &(Map.get(&1, "role") == "master"))
 
-      %{"role" => "master", "ip" => ip, "port" => port} ->
-        {ip, port}
-
-      _ ->
-        nil
-    end)
+    masters
+    |> Enum.find(&(Map.get(&1, "health") in [nil, "online"]))
+    |> then(&(&1 || List.first(masters)))
+    |> node_address()
   end
 
   defp find_replicas(nodes) do
@@ -164,6 +159,13 @@ defmodule Redis.Cluster.Topology do
       port = Map.get(node, "port")
       {normalize_host(host), port}
     end)
+  end
+
+  defp node_address(nil), do: nil
+
+  defp node_address(node) do
+    host = Map.get(node, "endpoint") || Map.get(node, "ip", "127.0.0.1")
+    {host, Map.get(node, "port")}
   end
 
   # Slot ranges come as flat list [start1, end1, start2, end2, ...]

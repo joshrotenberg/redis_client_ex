@@ -173,6 +173,18 @@ defmodule Redis.ClusterTest do
       assert Enum.at(results, 3) == "PONG"
     end
 
+    test "pipeline containing only key-less commands executes every command", %{cluster: cluster} do
+      assert {:ok, ["PONG", _db_size]} =
+               Cluster.pipeline(cluster, [["PING"], ["DBSIZE"]])
+    end
+
+    test "rejects a single multi-key command spanning slots", %{cluster: cluster} do
+      assert {:error, :cross_slot} = Cluster.command(cluster, ["MGET", "foo", "bar"])
+
+      assert {:error, :cross_slot} =
+               Cluster.pipeline(cluster, [["MGET", "foo", "bar"]])
+    end
+
     test "cross-slot pipeline preserves result ordering", %{cluster: cluster} do
       # Set up keys across different slots
       keys = for i <- 1..10, do: "order:#{i}"

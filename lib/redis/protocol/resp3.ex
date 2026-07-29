@@ -340,7 +340,7 @@ defmodule Redis.Protocol.RESP3 do
     case safe_to_integer(len_str) do
       {:ok, len} ->
         case rest do
-          <<blob::binary-size(len), "\r\n", rest2::binary>> -> callback.(blob, rest2)
+          <<blob::binary-size(^len), "\r\n", rest2::binary>> -> callback.(blob, rest2)
           _ -> {:continuation, &decode/1}
         end
 

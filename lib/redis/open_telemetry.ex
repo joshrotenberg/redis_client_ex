@@ -30,7 +30,10 @@ if Code.ensure_loaded?(OpenTelemetry) do
 
     require OpenTelemetry.Tracer, as: Tracer
 
+    alias OpenTelemetry.Span
+
     @handler_id "redis-ex-opentelemetry"
+    @span_key {__MODULE__, :span}
 
     @doc """
     Attaches telemetry handlers that create OpenTelemetry spans for Redis commands.
@@ -43,7 +46,7 @@ if Code.ensure_loaded?(OpenTelemetry) do
         [:redis_ex, :pipeline, :exception]
       ]
 
-      :telemetry.attach_many(@handler_id, events, &handle_event/4, nil)
+      :telemetry.attach_many(@handler_id, events, &__MODULE__.handle_event/4, nil)
     rescue
       UndefinedFunctionError -> :ok
     end
@@ -63,20 +66,33 @@ if Code.ensure_loaded?(OpenTelemetry) do
       commands = Map.get(metadata, :commands, [])
       span_name = span_name(commands)
       attributes = build_attributes(commands, metadata)
+      span_ctx = Tracer.start_span(span_name, %{attributes: attributes})
 
-      Tracer.start_span(span_name, %{attributes: attributes})
+      Process.put(span_key(metadata), span_ctx)
+      :ok
     end
 
-    def handle_event([:redis_ex, :pipeline, :stop], _measurements, _metadata, _config) do
-      Tracer.end_span()
+    def handle_event([:redis_ex, :pipeline, :stop], _measurements, metadata, _config) do
+      with span_ctx when not is_nil(span_ctx) <- take_span(metadata) do
+        Span.end_span(span_ctx)
+      end
+
+      :ok
     end
 
     def handle_event([:redis_ex, :pipeline, :exception], _measurements, metadata, _config) do
       reason = Map.get(metadata, :reason)
 
-      Tracer.set_status(:error, inspect(reason))
-      Tracer.end_span()
+      with span_ctx when not is_nil(span_ctx) <- take_span(metadata) do
+        Span.set_status(span_ctx, OpenTelemetry.status(:error, inspect(reason)))
+        Span.end_span(span_ctx)
+      end
+
+      :ok
     end
+
+    defp span_key(metadata), do: {@span_key, Map.get(metadata, :operation_id, :uncorrelated)}
+    defp take_span(metadata), do: Process.delete(span_key(metadata))
 
     defp span_name(commands) do
       case commands do

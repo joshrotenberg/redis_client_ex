@@ -1,0 +1,4 @@
+/_build/
+/dependency-compile.log
+/deps/
+/mix.lock

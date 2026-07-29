@@ -48,7 +48,8 @@ mix dialyzer
 UNIT_ONLY=true mix test test/unit/
 ```
 
-All of these run in PR CI. Full integration tests run on a daily schedule.
+All of these run in PR CI. The unit suite runs across the supported Elixir
+version matrix; full integration tests run on a daily schedule.
 
 ## Pull Requests
 
@@ -89,7 +90,9 @@ test/
 | `:sentinel` | Yes | `REDIS_SENTINEL=true` |
 | `:cluster_failover` | Yes | `REDIS_CLUSTER_FAILOVER=true` |
 
-All other tests run in CI on every push.
+Tests without an opt-in tag run in the daily integration workflow. PR CI runs
+the unit suite; run the full suite locally for changes that touch networked
+client behavior.
 
 ## Architecture
 

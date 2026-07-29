@@ -37,6 +37,8 @@ defmodule Redis.Telemetry do
       Redis.Telemetry.attach_default_handler()
   """
 
+  @compile {:no_warn_undefined, :telemetry}
+
   require Logger
 
   @doc """
@@ -85,26 +87,27 @@ defmodule Redis.Telemetry do
       [:redis_ex, :pipeline, :stop]
     ]
 
-    :telemetry.attach_many("redis-ex-default", events, &handle_event/4, nil)
+    :telemetry.attach_many("redis-ex-default", events, &__MODULE__.handle_event/4, nil)
   rescue
     UndefinedFunctionError ->
       Logger.warning("Redis.Telemetry: :telemetry not available")
       :ok
   end
 
-  defp handle_event([:redis_ex, :connection, :connect], measurements, metadata, _config) do
+  @doc false
+  def handle_event([:redis_ex, :connection, :connect], measurements, metadata, _config) do
     Logger.info(
       "Redis connected to #{metadata.host}:#{metadata.port} in #{format_duration(measurements.duration)}"
     )
   end
 
-  defp handle_event([:redis_ex, :connection, :disconnect], _measurements, metadata, _config) do
+  def handle_event([:redis_ex, :connection, :disconnect], _measurements, metadata, _config) do
     Logger.warning(
       "Redis disconnected from #{metadata.host}:#{metadata.port}: #{inspect(metadata.reason)}"
     )
   end
 
-  defp handle_event([:redis_ex, :pipeline, :stop], measurements, metadata, _config) do
+  def handle_event([:redis_ex, :pipeline, :stop], measurements, metadata, _config) do
     count = length(Map.get(metadata, :commands, []))
 
     Logger.debug(

@@ -46,6 +46,13 @@ defmodule Redis.URITest do
       assert opts[:ssl] == true
     end
 
+    test "valkey:// uses Redis defaults" do
+      opts = RURI.parse("valkey://localhost")
+      assert opts[:host] == "localhost"
+      assert opts[:port] == 6379
+      refute Keyword.has_key?(opts, :ssl)
+    end
+
     test "redis:// does not set SSL" do
       opts = RURI.parse("redis://localhost:6379")
       refute Keyword.has_key?(opts, :ssl)
@@ -65,6 +72,19 @@ defmodule Redis.URITest do
       assert opts[:database] == 3
       assert opts[:ssl] == true
     end
+
+    test "IPv6 host and explicit port" do
+      opts = RURI.parse("redis://[::1]:6380/2")
+      assert opts[:host] == "::1"
+      assert opts[:port] == 6380
+      assert opts[:database] == 2
+    end
+
+    test "rejects unsupported or hostless URIs" do
+      assert_raise ArgumentError, fn -> RURI.parse("http://localhost:6379") end
+      assert_raise ArgumentError, fn -> RURI.parse("redis://") end
+      assert_raise ArgumentError, fn -> RURI.parse("localhost:6379") end
+    end
   end
 
   describe "to_string/1" do
@@ -82,6 +102,14 @@ defmodule Redis.URITest do
 
     test "with database" do
       assert RURI.to_string(host: "h", port: 6379, database: 5) == "redis://h:6379/5"
+    end
+
+    test "with IPv6 host" do
+      assert RURI.to_string(host: "::1", port: 6380) == "redis://[::1]:6380"
+    end
+
+    test "with username and no password" do
+      assert RURI.to_string(host: "h", username: "alice") == "redis://alice:@h:6379"
     end
   end
 end

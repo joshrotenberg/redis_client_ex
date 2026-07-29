@@ -172,6 +172,9 @@ defmodule Redis.Cluster do
           {:ok, conn} -> {:reply, Connection.command(conn, args), state}
           error -> {:reply, error, state}
         end
+
+      {:error, :cross_slot} ->
+        {:reply, {:error, :cross_slot}, state}
     end
   end
 
@@ -191,6 +194,12 @@ defmodule Redis.Cluster do
 
       {:error, :empty} ->
         {:reply, {:ok, []}, state}
+
+      {:error, :no_key} ->
+        case any_connection(state) do
+          {:ok, conn} -> {:reply, Connection.pipeline(conn, commands), state}
+          error -> {:reply, error, state}
+        end
     end
   end
 
@@ -210,6 +219,12 @@ defmodule Redis.Cluster do
 
       {:error, :empty} ->
         {:reply, {:error, :empty_transaction}, state}
+
+      {:error, :no_key} ->
+        case any_connection(state) do
+          {:ok, conn} -> {:reply, Connection.transaction(conn, commands), state}
+          error -> {:reply, error, state}
+        end
     end
   end
 
@@ -434,12 +449,10 @@ defmodule Redis.Cluster do
           redirects_left
         )
 
-      {:error, _} = error ->
-        # No connection for this slot — try refreshing topology
-        case refresh_topology(state) do
-          {:ok, state} -> execute_with_redirects(state, slot, args, type, redirects_left - 1)
-          _ -> {error, state}
-        end
+      {:error, _reason} ->
+        # No connection for this slot — give cluster gossip a moment to
+        # converge, refresh topology, and retry on the newly elected primary.
+        retry_after_refresh(state, slot, args, type, redirects_left)
     end
   end
 
@@ -470,6 +483,21 @@ defmodule Redis.Cluster do
     {_new_slot, host, port} = parse_redirect(rest)
     state = ensure_connection(state, host, port)
     handle_ask_redirect(state, host, port, args)
+  end
+
+  defp handle_execution_result(
+         {:error, %Redis.ConnectionError{} = error},
+         state,
+         slot,
+         args,
+         type,
+         redirects_left
+       ) do
+    Logger.debug("Redis.Cluster: node connection failed: #{Exception.message(error)}")
+
+    state
+    |> drop_connection_for_slot(slot)
+    |> retry_after_refresh(slot, args, type, redirects_left)
   end
 
   defp handle_execution_result(result, state, _slot, _args, _type, _redirects_left) do
@@ -507,11 +535,15 @@ defmodule Redis.Cluster do
   # -------------------------------------------------------------------
 
   defp execute_split_pipeline(state, commands) do
-    groups = group_commands_by_slot(commands)
-    default_conn = default_connection(state)
-    tasks = dispatch_pipeline_groups(state, groups, default_conn)
-    task_results = Task.await_many(tasks, state.timeout || 5_000)
-    assemble_pipeline_results(task_results)
+    if Enum.any?(commands, &(Router.slot_for_command(&1) == {:error, :cross_slot})) do
+      {:error, :cross_slot}
+    else
+      groups = group_commands_by_slot(commands)
+      default_conn = default_connection(state)
+      tasks = dispatch_pipeline_groups(state, groups, default_conn)
+      task_results = Task.await_many(tasks, state.timeout || 5_000)
+      assemble_pipeline_results(task_results)
+    end
   end
 
   defp group_commands_by_slot(commands) do
@@ -593,10 +625,47 @@ defmodule Redis.Cluster do
 
   defp connect_node(state, host, port) do
     opts =
-      [host: host, port: port, timeout: state.timeout]
+      [
+        host: host,
+        port: port,
+        timeout: state.timeout,
+        exit_on_disconnection: true
+      ]
       |> maybe_put(:password, state.password)
 
     Connection.start_link(opts)
+  end
+
+  defp drop_connection_for_slot(state, slot) do
+    case :ets.lookup(state.slot_table, slot) do
+      [{^slot, addr}] ->
+        {conn, connections} = Map.pop(state.connections, addr)
+
+        if conn do
+          try do
+            Connection.stop(conn)
+          catch
+            :exit, _ -> :ok
+          end
+        end
+
+        %{state | connections: connections}
+
+      [] ->
+        state
+    end
+  end
+
+  defp retry_after_refresh(state, slot, args, type, redirects_left) do
+    Process.sleep(100)
+
+    case refresh_topology(state) do
+      {:ok, state} ->
+        execute_with_redirects(state, slot, args, type, redirects_left - 1)
+
+      {:error, _reason} ->
+        {{:error, :node_unavailable}, state}
+    end
   end
 
   defp get_connection_for_slot(state, slot) do

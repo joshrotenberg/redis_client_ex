@@ -47,6 +47,8 @@ defmodule Redis.JSON do
     * `:atom_keys` -- return map keys as atoms (default: `false`)
   """
 
+  @compile {:no_warn_undefined, Jason}
+
   alias Redis.Commands.JSON, as: Cmd
   alias Redis.Connection
 
@@ -343,9 +345,19 @@ defmodule Redis.JSON do
     ArgumentError -> map
   end
 
-  defp parse_type([type]) when is_binary(type), do: String.to_atom(type)
-  defp parse_type([[type]]) when is_binary(type), do: String.to_atom(type)
-  defp parse_type(type) when is_binary(type), do: String.to_atom(type)
+  @json_types %{
+    "array" => :array,
+    "boolean" => :boolean,
+    "integer" => :integer,
+    "null" => :null,
+    "number" => :number,
+    "object" => :object,
+    "string" => :string
+  }
+
+  defp parse_type([type]) when is_binary(type), do: parse_type(type)
+  defp parse_type([[type]]) when is_binary(type), do: parse_type(type)
+  defp parse_type(type) when is_binary(type), do: Map.get(@json_types, type, type)
   defp parse_type(other), do: other
 
   defp unwrap_numeric([n]) when is_number(n), do: n

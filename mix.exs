@@ -2,7 +2,7 @@ defmodule Redis.MixProject do
   use Mix.Project
 
   @version "0.7.1"
-  @source_url "https://github.com/joshrotenberg/redis_ex"
+  @source_url "https://github.com/joshrotenberg/redis_client_ex"
 
   def project do
     [

@@ -68,34 +68,39 @@ defmodule Redis.Connection.Pool do
   @spec command(GenServer.server(), [String.t()], keyword()) ::
           {:ok, term()} | {:error, term()}
   def command(pool, args, opts \\ []) do
-    conn = GenServer.call(pool, :checkout)
-    Connection.command(conn, args, opts)
+    with {:ok, conn} <- checkout(pool) do
+      Connection.command(conn, args, opts)
+    end
   end
 
   @spec pipeline(GenServer.server(), [[String.t()]], keyword()) ::
           {:ok, [term()]} | {:error, term()}
   def pipeline(pool, commands, opts \\ []) do
-    conn = GenServer.call(pool, :checkout)
-    Connection.pipeline(conn, commands, opts)
+    with {:ok, conn} <- checkout(pool) do
+      Connection.pipeline(conn, commands, opts)
+    end
   end
 
   @spec transaction(GenServer.server(), [[String.t()]], keyword()) ::
           {:ok, [term()]} | {:error, term()}
   def transaction(pool, commands, opts \\ []) do
-    conn = GenServer.call(pool, :checkout)
-    Connection.transaction(conn, commands, opts)
+    with {:ok, conn} <- checkout(pool) do
+      Connection.transaction(conn, commands, opts)
+    end
   end
 
   @spec noreply_command(GenServer.server(), [String.t()], keyword()) :: :ok | {:error, term()}
   def noreply_command(pool, args, opts \\ []) do
-    conn = GenServer.call(pool, :checkout)
-    Connection.noreply_command(conn, args, opts)
+    with {:ok, conn} <- checkout(pool) do
+      Connection.noreply_command(conn, args, opts)
+    end
   end
 
   @spec noreply_pipeline(GenServer.server(), [[String.t()]], keyword()) :: :ok | {:error, term()}
   def noreply_pipeline(pool, commands, opts \\ []) do
-    conn = GenServer.call(pool, :checkout)
-    Connection.noreply_pipeline(conn, commands, opts)
+    with {:ok, conn} <- checkout(pool) do
+      Connection.noreply_pipeline(conn, commands, opts)
+    end
   end
 
   @doc "Returns pool info: size, active connections, strategy."
@@ -116,22 +121,25 @@ defmodule Redis.Connection.Pool do
     {pool_size, opts} = Keyword.pop(opts, :pool_size, 5)
     {strategy, opts} = Keyword.pop(opts, :strategy, :round_robin)
 
-    state = %__MODULE__{
-      pool_size: pool_size,
-      strategy: strategy,
-      conn_opts: opts
-    }
-
-    case start_connections(state) do
-      {:ok, state} -> {:ok, state}
+    with :ok <- validate_options(pool_size, strategy),
+         state = %__MODULE__{
+           pool_size: pool_size,
+           strategy: strategy,
+           conn_opts: opts
+         },
+         {:ok, state} <- start_connections(state) do
+      {:ok, state}
+    else
       {:error, reason} -> {:stop, reason}
     end
   end
 
   @impl true
   def handle_call(:checkout, _from, state) do
-    {conn, state} = pick_connection(state)
-    {:reply, conn, state}
+    case pick_connection(state) do
+      {:ok, conn, state} -> {:reply, conn, state}
+      {:error, reason, state} -> {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call(:info, _from, state) do
@@ -146,33 +154,27 @@ defmodule Redis.Connection.Pool do
 
   # Also support direct command/pipeline/transaction calls (for resilience wrapper compat)
   def handle_call({:command, args, opts}, _from, state) do
-    {conn, state} = pick_connection(state)
-    {:reply, Connection.command(conn, args, opts), state}
+    dispatch(state, &Connection.command(&1, args, opts))
   end
 
   def handle_call({:command, args}, _from, state) do
-    {conn, state} = pick_connection(state)
-    {:reply, Connection.command(conn, args), state}
+    dispatch(state, &Connection.command(&1, args))
   end
 
   def handle_call({:pipeline, commands, opts}, _from, state) do
-    {conn, state} = pick_connection(state)
-    {:reply, Connection.pipeline(conn, commands, opts), state}
+    dispatch(state, &Connection.pipeline(&1, commands, opts))
   end
 
   def handle_call({:pipeline, commands}, _from, state) do
-    {conn, state} = pick_connection(state)
-    {:reply, Connection.pipeline(conn, commands), state}
+    dispatch(state, &Connection.pipeline(&1, commands))
   end
 
   def handle_call({:transaction, commands, opts}, _from, state) do
-    {conn, state} = pick_connection(state)
-    {:reply, Connection.transaction(conn, commands, opts), state}
+    dispatch(state, &Connection.transaction(&1, commands, opts))
   end
 
   def handle_call({:transaction, commands}, _from, state) do
-    {conn, state} = pick_connection(state)
-    {:reply, Connection.transaction(conn, commands), state}
+    dispatch(state, &Connection.transaction(&1, commands))
   end
 
   @impl true
@@ -187,6 +189,10 @@ defmodule Redis.Connection.Pool do
     # Replace it
     state = replace_connection(state)
     {:noreply, state}
+  end
+
+  def handle_info(:replace_retry, state) do
+    {:noreply, replace_connection(state)}
   end
 
   def handle_info({:EXIT, _pid, _reason}, state), do: {:noreply, state}
@@ -250,6 +256,14 @@ defmodule Redis.Connection.Pool do
   end
 
   defp replace_connection(state) do
+    if length(state.conns) < state.pool_size do
+      do_replace_connection(state)
+    else
+      state
+    end
+  end
+
+  defp do_replace_connection(state) do
     case Connection.start_link(state.conn_opts) do
       {:ok, conn} ->
         ref = Process.monitor(conn)
@@ -264,14 +278,39 @@ defmodule Redis.Connection.Pool do
     end
   end
 
+  defp pick_connection(%{conns: []} = state), do: {:error, :no_connections, state}
+
   defp pick_connection(%{strategy: :round_robin} = state) do
     index = rem(state.index, length(state.conns))
     conn = Enum.at(state.conns, index)
-    {conn, %{state | index: index + 1}}
+    {:ok, conn, %{state | index: index + 1}}
   end
 
   defp pick_connection(%{strategy: :random} = state) do
     conn = Enum.random(state.conns)
-    {conn, state}
+    {:ok, conn, state}
   end
+
+  defp checkout(pool) do
+    case GenServer.call(pool, :checkout) do
+      conn when is_pid(conn) -> {:ok, conn}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp dispatch(state, fun) do
+    case pick_connection(state) do
+      {:ok, conn, state} -> {:reply, fun.(conn), state}
+      {:error, reason, state} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  defp validate_options(pool_size, strategy)
+       when is_integer(pool_size) and pool_size > 0 and strategy in [:round_robin, :random],
+       do: :ok
+
+  defp validate_options(pool_size, _strategy) when not is_integer(pool_size) or pool_size <= 0,
+    do: {:error, {:invalid_pool_size, pool_size}}
+
+  defp validate_options(_pool_size, strategy), do: {:error, {:invalid_strategy, strategy}}
 end

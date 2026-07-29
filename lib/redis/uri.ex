@@ -22,45 +22,38 @@ defmodule Redis.URI do
   """
 
   @default_port 6379
+  @supported_schemes ~w(redis rediss valkey)
 
   @doc """
   Parses a Redis URI string into a keyword list of connection options.
   """
   @spec parse(String.t()) :: keyword()
   def parse(uri_string) when is_binary(uri_string) do
-    normalized = normalize_scheme(uri_string)
-    ssl = String.starts_with?(uri_string, "rediss://")
-    uri = URI.parse(normalized)
+    uri = URI.parse(uri_string)
+    validate_uri!(uri, uri_string)
+    ssl = uri.scheme == "rediss"
 
     []
     |> prepend_host(uri)
-    |> prepend_port(uri_string)
+    |> prepend_port(uri)
     |> prepend_userinfo(uri)
     |> prepend_database(uri)
     |> prepend_ssl(ssl)
     |> Enum.reverse()
   end
 
-  defp normalize_scheme(uri_string) do
-    uri_string
-    |> String.replace(~r/^rediss:\/\//, "https://")
-    |> String.replace(~r/^redis:\/\//, "http://")
-    |> String.replace(~r/^valkey:\/\//, "http://")
+  defp validate_uri!(%{scheme: scheme, host: host}, _uri_string)
+       when scheme in @supported_schemes and is_binary(host) and host != "",
+       do: :ok
+
+  defp validate_uri!(_uri, uri_string) do
+    raise ArgumentError,
+          "invalid Redis URI #{inspect(uri_string)}; expected redis://, rediss://, or valkey:// with a host"
   end
 
-  defp prepend_host(opts, uri) do
-    if uri.host && uri.host != "", do: [{:host, uri.host} | opts], else: opts
-  end
+  defp prepend_host(opts, uri), do: [{:host, uri.host} | opts]
 
-  defp prepend_port(opts, uri_string) do
-    actual_port =
-      case Regex.run(~r/:(\d+)(?:\/|$)/, uri_string) do
-        [_, port_str] -> String.to_integer(port_str)
-        _ -> @default_port
-      end
-
-    [{:port, actual_port} | opts]
-  end
+  defp prepend_port(opts, uri), do: [{:port, uri.port || @default_port} | opts]
 
   defp prepend_userinfo(opts, %{userinfo: nil}), do: opts
 
@@ -97,7 +90,7 @@ defmodule Redis.URI do
   @spec to_string(keyword()) :: String.t()
   def to_string(opts) do
     scheme = if Keyword.get(opts, :ssl, false), do: "rediss", else: "redis"
-    host = Keyword.get(opts, :host, "127.0.0.1")
+    host = opts |> Keyword.get(:host, "127.0.0.1") |> format_host()
     port = Keyword.get(opts, :port, @default_port)
     password = Keyword.get(opts, :password)
     username = Keyword.get(opts, :username)
@@ -107,6 +100,7 @@ defmodule Redis.URI do
       case {username, password} do
         {nil, nil} -> ""
         {nil, pw} -> ":#{URI.encode(pw)}@"
+        {user, nil} -> "#{URI.encode(user)}:@"
         {user, pw} -> "#{URI.encode(user)}:#{URI.encode(pw)}@"
       end
 
@@ -118,5 +112,13 @@ defmodule Redis.URI do
       end
 
     "#{scheme}://#{userinfo}#{host}:#{port}#{db_path}"
+  end
+
+  defp format_host(host) do
+    if String.contains?(host, ":") and not String.starts_with?(host, "[") do
+      "[#{host}]"
+    else
+      host
+    end
   end
 end

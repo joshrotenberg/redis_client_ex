@@ -160,4 +160,19 @@ defmodule Redis.JSON.MockTest do
       assert Redis.JSON.exists?(conn, "doc:1") == false
     end
   end
+
+  describe "type/3" do
+    test "returns known JSON types as atoms" do
+      {:ok, conn} = TestConn.start_link([{:ok, ["object"]}])
+
+      assert {:ok, :object} = Redis.JSON.type(conn, "doc:1")
+    end
+
+    test "does not create atoms for unexpected server responses" do
+      type = "future_type_#{System.unique_integer([:positive])}"
+      {:ok, conn} = TestConn.start_link([{:ok, [type]}])
+
+      assert {:ok, ^type} = Redis.JSON.type(conn, "doc:1")
+    end
+  end
 end

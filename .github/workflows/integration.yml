@@ -70,6 +70,18 @@ jobs:
           REDIS_STACK: ${{ matrix.stack && 'true' || '' }}
         run: mix test
 
+      - name: Run Sentinel topology tests
+        if: matrix.redis == '8'
+        env:
+          REDIS_SENTINEL: "true"
+        run: mix test test/integration/sentinel_test.exs
+
+      - name: Run Cluster failover tests
+        if: matrix.redis == '8'
+        env:
+          REDIS_CLUSTER_FAILOVER: "true"
+        run: mix test test/integration/cluster_failover_test.exs
+
       - name: Run version compatibility tests
         env:
           REDIS_COMPAT: "true"

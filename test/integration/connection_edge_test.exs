@@ -150,14 +150,11 @@ defmodule Redis.Connection.EdgeTest do
   end
 
   describe "pipeline with empty command list" do
-    test "empty pipeline times out because no response is expected from server" do
+    test "empty pipeline returns immediately and leaves the connection usable" do
       {:ok, conn} = Connection.start_link(port: 6398)
 
-      # An empty pipeline sends no data to Redis but the caller is queued
-      # waiting for 0 decoded responses. Since process_buffer is only
-      # triggered by incoming data, the caller never gets a reply and
-      # the GenServer.call times out.
-      assert catch_exit(Connection.pipeline(conn, [], timeout: 500))
+      assert {:ok, []} = Connection.pipeline(conn, [], timeout: 500)
+      assert {:ok, "PONG"} = Connection.command(conn, ["PING"])
 
       Connection.stop(conn)
     end

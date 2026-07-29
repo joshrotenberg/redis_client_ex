@@ -36,4 +36,76 @@ defmodule Redis.Cluster.RouterTest do
       assert Router.slot("hello") == 866
     end
   end
+
+  describe "keys_from_command/1" do
+    test "extracts keys from common multi-key commands" do
+      assert Router.keys_from_command(["MGET", "a", "b"]) == ["a", "b"]
+      assert Router.keys_from_command(["MSET", "a", "1", "b", "2"]) == ["a", "b"]
+      assert Router.keys_from_command(["RENAME", "old", "new"]) == ["old", "new"]
+    end
+
+    test "extracts declared keys from scripts and functions" do
+      assert Router.keys_from_command(["EVAL", "return 1", "2", "a", "b", "arg"]) == [
+               "a",
+               "b"
+             ]
+
+      assert Router.keys_from_command(["FCALL", "my_fn", "1", "key", "arg"]) == ["key"]
+    end
+
+    test "extracts stream keys from XREAD variants" do
+      assert Router.keys_from_command([
+               "XREAD",
+               "COUNT",
+               "2",
+               "STREAMS",
+               "stream:a",
+               "stream:b",
+               "0",
+               "0"
+             ]) == ["stream:a", "stream:b"]
+
+      assert Router.keys_from_command([
+               "XREADGROUP",
+               "GROUP",
+               "g",
+               "c",
+               "STREAMS",
+               "stream:a",
+               ">"
+             ]) == ["stream:a"]
+    end
+
+    test "recognizes key-less commands with arguments" do
+      assert Router.keys_from_command(["SCAN", "0", "MATCH", "*"]) == []
+      assert Router.keys_from_command(["CLIENT", "SETNAME", "app"]) == []
+      assert Router.keys_from_command(["MEMORY", "STATS"]) == []
+      assert Router.keys_from_command(["MEMORY", "USAGE", "key"]) == ["key"]
+    end
+  end
+
+  describe "slot_for_command/1" do
+    test "accepts multi-key commands whose keys share a hash slot" do
+      assert {:ok, _slot} = Router.slot_for_command(["MGET", "{user}.name", "{user}.email"])
+    end
+
+    test "rejects a multi-key command spanning slots" do
+      assert {:error, :cross_slot} = Router.slot_for_command(["MGET", "key:a", "key:b"])
+    end
+
+    test "reports key-less commands" do
+      assert {:error, :no_key} = Router.slot_for_command(["SCAN", "0"])
+    end
+  end
+
+  describe "validate_pipeline/1" do
+    test "distinguishes empty from key-less pipelines" do
+      assert {:error, :empty} = Router.validate_pipeline([])
+      assert {:error, :no_key} = Router.validate_pipeline([["PING"], ["SCAN", "0"]])
+    end
+
+    test "rejects a single cross-slot command" do
+      assert {:error, :cross_slot} = Router.validate_pipeline([["MGET", "key:a", "key:b"]])
+    end
+  end
 end
