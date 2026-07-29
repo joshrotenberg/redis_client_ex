@@ -116,6 +116,32 @@ defmodule Redis.ClusterTest do
       end
     end
 
+    test "option-bearing XREAD routes by stream key on every master", %{cluster: cluster} do
+      streams = ["events:{06S}set", "events:{6eo}set", "events:{68H}set"]
+
+      for stream <- streams do
+        assert {:ok, _id} =
+                 Cluster.command(cluster, ["XADD", stream, "*", "event", "created"])
+
+        command = ["XREAD", "COUNT", "1", "STREAMS", stream, "0-0"]
+
+        assert {:ok, response} = Cluster.command(cluster, command)
+        assert response != nil
+      end
+
+      assert {:error, :cross_slot} =
+               Cluster.command(cluster, [
+                 "XREAD",
+                 "COUNT",
+                 "1",
+                 "STREAMS",
+                 Enum.at(streams, 0),
+                 Enum.at(streams, 1),
+                 "0-0",
+                 "0-0"
+               ])
+    end
+
     test "INCR across cluster", %{cluster: cluster} do
       assert {:ok, 1} = Cluster.command(cluster, ["INCR", "ctr:a"])
       assert {:ok, 2} = Cluster.command(cluster, ["INCR", "ctr:a"])

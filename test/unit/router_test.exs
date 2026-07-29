@@ -76,6 +76,41 @@ defmodule Redis.Cluster.RouterTest do
              ]) == ["stream:a"]
     end
 
+    test "routes option-bearing stream reads by keys after STREAMS" do
+      stream = "events:{6eo}set"
+
+      xread = [
+        "XREAD",
+        "COUNT",
+        "1",
+        "BLOCK",
+        "10",
+        "STREAMS",
+        stream,
+        "0-0"
+      ]
+
+      xreadgroup = [
+        "XREADGROUP",
+        "GROUP",
+        "workers",
+        "one",
+        "COUNT",
+        "1",
+        "BLOCK",
+        "10",
+        "NOACK",
+        "STREAMS",
+        stream,
+        ">"
+      ]
+
+      assert Router.key_from_command(xread) == stream
+      assert Router.key_from_command(xreadgroup) == stream
+      assert Router.slot_for_command(xread) == {:ok, Router.slot(stream)}
+      refute Router.slot(stream) == Router.slot("COUNT")
+    end
+
     test "recognizes key-less commands with arguments" do
       assert Router.keys_from_command(["SCAN", "0", "MATCH", "*"]) == []
       assert Router.keys_from_command(["CLIENT", "SETNAME", "app"]) == []
@@ -91,6 +126,18 @@ defmodule Redis.Cluster.RouterTest do
 
     test "rejects a multi-key command spanning slots" do
       assert {:error, :cross_slot} = Router.slot_for_command(["MGET", "key:a", "key:b"])
+
+      assert {:error, :cross_slot} =
+               Router.slot_for_command([
+                 "XREAD",
+                 "COUNT",
+                 "1",
+                 "STREAMS",
+                 "events:{06S}set",
+                 "events:{6eo}set",
+                 "0-0",
+                 "0-0"
+               ])
     end
 
     test "reports key-less commands" do
