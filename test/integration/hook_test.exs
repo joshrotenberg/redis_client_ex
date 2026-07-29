@@ -130,6 +130,32 @@ defmodule Redis.Integration.HookTest do
       Redis.Connection.stop(conn)
       CountingHook.cleanup()
     end
+
+    test "auto-pipelined commands retain per-command hooks" do
+      CountingHook.reset()
+
+      {:ok, conn} =
+        Redis.Connection.start_link(
+          port: 6398,
+          hooks: [CountingHook],
+          auto_pipeline: true,
+          auto_pipeline_window: 20
+        )
+
+      tasks =
+        for _index <- 1..3 do
+          Task.async(fn -> Redis.Connection.command(conn, ["PING"]) end)
+        end
+
+      assert Enum.all?(tasks, &match?({:ok, "PONG"}, Task.await(&1, 1_000)))
+      assert CountingHook.count(:before_command) == 3
+      assert CountingHook.count(:after_command) == 3
+      assert CountingHook.count(:before_pipeline) == 0
+      assert CountingHook.count(:after_pipeline) == 0
+
+      Redis.Connection.stop(conn)
+      CountingHook.cleanup()
+    end
   end
 
   describe "counting hooks on pipelines" do

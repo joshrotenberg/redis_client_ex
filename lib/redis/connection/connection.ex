@@ -30,6 +30,12 @@ defmodule Redis.Connection do
     * `:exit_on_disconnection` - exit instead of reconnecting (default: false)
     * `:hibernate_after` - idle ms before hibernation (default: nil)
     * `:hooks` - list of `Redis.Hook` modules for command middleware (default: [])
+    * `:auto_pipeline` - batch concurrent commands into one socket write
+      (default: false)
+    * `:auto_pipeline_window` - time in milliseconds to collect a batch
+      (default: 1)
+    * `:auto_pipeline_max_size` - flush a batch when it reaches this many
+      commands (default: 1_000)
 
   Command, pipeline, and transaction calls also accept `response: :typed` to
   opt into the structured values documented by `Redis.Response`. Raw RESP
@@ -64,12 +70,18 @@ defmodule Redis.Connection do
     :timeout,
     :push_receiver,
     :credential_provider,
+    :auto_pipeline_timer,
     protocol: :resp3,
     state: :disconnected,
     exit_on_disconnection: false,
     buffer: <<>>,
     callers: :queue.new(),
-    hooks: []
+    hooks: [],
+    auto_pipeline: false,
+    auto_pipeline_window: 1,
+    auto_pipeline_max_size: 1_000,
+    auto_pipeline_batch: [],
+    auto_pipeline_size: 0
   ]
 
   @behaviour Redis.Connection.Behaviour
@@ -100,16 +112,18 @@ defmodule Redis.Connection do
   end
 
   def start_link(opts) when is_list(opts) do
-    {name, opts} = Keyword.pop(opts, :name)
-    {hibernate_after, opts} = Keyword.pop(opts, :hibernate_after)
+    with :ok <- validate_auto_pipeline_options(opts) do
+      {name, opts} = Keyword.pop(opts, :name)
+      {hibernate_after, opts} = Keyword.pop(opts, :hibernate_after)
 
-    gen_opts = []
-    gen_opts = if name, do: [{:name, name} | gen_opts], else: gen_opts
+      gen_opts = []
+      gen_opts = if name, do: [{:name, name} | gen_opts], else: gen_opts
 
-    gen_opts =
-      if hibernate_after, do: [{:hibernate_after, hibernate_after} | gen_opts], else: gen_opts
+      gen_opts =
+        if hibernate_after, do: [{:hibernate_after, hibernate_after} | gen_opts], else: gen_opts
 
-    GenServer.start_link(__MODULE__, opts, gen_opts)
+      GenServer.start_link(__MODULE__, opts, gen_opts)
+    end
   end
 
   def start_link, do: start_link([])
@@ -291,7 +305,10 @@ defmodule Redis.Connection do
       exit_on_disconnection: Keyword.get(opts, :exit_on_disconnection, false),
       push_receiver: Keyword.get(opts, :push_receiver),
       credential_provider: credential_provider,
-      hooks: Keyword.get(opts, :hooks, [])
+      hooks: Keyword.get(opts, :hooks, []),
+      auto_pipeline: Keyword.get(opts, :auto_pipeline, false),
+      auto_pipeline_window: Keyword.get(opts, :auto_pipeline_window, 1),
+      auto_pipeline_max_size: Keyword.get(opts, :auto_pipeline_max_size, 1_000)
     }
 
     sync = Keyword.get(opts, :sync_connect, true)
@@ -321,6 +338,27 @@ defmodule Redis.Connection do
     handle_call({:transaction, commands}, from, state)
   end
 
+  def handle_call(
+        {operation, _payload} = message,
+        from,
+        %{
+          state: :ready,
+          auto_pipeline_size: size
+        } = state
+      )
+      when operation in [:pipeline, :transaction, :noreply_command, :noreply_pipeline] and
+             size > 0 do
+    case flush_auto_pipeline(state, :barrier) do
+      {:ok, state} ->
+        handle_call(message, from, state)
+
+      {:error, reason, state} ->
+        state
+        |> fail_auto_pipeline(reason)
+        |> send_error_reply(reason)
+    end
+  end
+
   def handle_call({:command, args}, from, %{state: :ready} = state) do
     ctx = hook_context(state)
 
@@ -329,18 +367,8 @@ defmodule Redis.Connection do
         {:reply, err, state}
 
       {:ok, args} ->
-        data = encode(state.protocol, args)
         telemetry = telemetry_start(state, [args])
-
-        case send_data(state, data) do
-          :ok ->
-            callers = :queue.in({from, :single, {args, ctx, telemetry}}, state.callers)
-            {:noreply, %{state | callers: callers}}
-
-          {:error, reason} ->
-            telemetry_exception(telemetry, reason)
-            send_error_reply(state, reason)
-        end
+        dispatch_command(state, from, args, ctx, telemetry)
     end
   end
 
@@ -459,6 +487,7 @@ defmodule Redis.Connection do
   def handle_info({closed, socket}, %{socket: socket} = state)
       when closed in [:tcp_closed, :ssl_closed] do
     Logger.warning("Redis: connection closed")
+    state = fail_auto_pipeline(state, :closed)
     state = fail_pending_callers(state, :closed)
     telemetry_disconnect(state, :closed)
 
@@ -472,6 +501,7 @@ defmodule Redis.Connection do
   def handle_info({error, socket, reason}, %{socket: socket} = state)
       when error in [:tcp_error, :ssl_error] do
     Logger.warning("Redis: connection error: #{inspect(reason)}")
+    state = fail_auto_pipeline(state, reason)
     state = fail_pending_callers(state, reason)
     telemetry_disconnect(state, reason)
 
@@ -494,6 +524,20 @@ defmodule Redis.Connection do
         {:noreply, schedule_reconnect(state)}
     end
   end
+
+  def handle_info(
+        {:flush_auto_pipeline, token},
+        %{
+          auto_pipeline_timer: {_timer, token}
+        } = state
+      ) do
+    case flush_auto_pipeline(state, :window) do
+      {:ok, state} -> {:noreply, state}
+      {:error, reason, state} -> handle_auto_pipeline_error(state, reason)
+    end
+  end
+
+  def handle_info({:flush_auto_pipeline, _stale_token}, state), do: {:noreply, state}
 
   def handle_info({kind, _stale_socket, _data}, state)
       when kind in [:tcp, :ssl, :tcp_error, :ssl_error],
@@ -947,6 +991,126 @@ defmodule Redis.Connection do
   end
 
   # -------------------------------------------------------------------
+  # Auto-pipelining
+  # -------------------------------------------------------------------
+
+  defp dispatch_command(%{auto_pipeline: true} = state, from, args, ctx, telemetry) do
+    enqueue_auto_pipeline(state, from, args, ctx, telemetry)
+  end
+
+  defp dispatch_command(state, from, args, ctx, telemetry) do
+    data = encode(state.protocol, args)
+
+    case send_data(state, data) do
+      :ok ->
+        callers = :queue.in({from, :single, {args, ctx, telemetry}}, state.callers)
+        {:noreply, %{state | callers: callers}}
+
+      {:error, reason} ->
+        telemetry_exception(telemetry, reason)
+        send_error_reply(state, reason)
+    end
+  end
+
+  defp enqueue_auto_pipeline(state, from, args, ctx, telemetry) do
+    state =
+      state
+      |> ensure_auto_pipeline_timer()
+      |> Map.update!(:auto_pipeline_batch, &[{from, args, ctx, telemetry} | &1])
+      |> Map.update!(:auto_pipeline_size, &(&1 + 1))
+
+    if state.auto_pipeline_size >= state.auto_pipeline_max_size do
+      case flush_auto_pipeline(state, :max_size) do
+        {:ok, state} -> {:noreply, state}
+        {:error, reason, state} -> handle_auto_pipeline_error(state, reason)
+      end
+    else
+      {:noreply, state}
+    end
+  end
+
+  defp ensure_auto_pipeline_timer(%{auto_pipeline_timer: nil} = state) do
+    token = make_ref()
+
+    timer =
+      Process.send_after(
+        self(),
+        {:flush_auto_pipeline, token},
+        state.auto_pipeline_window
+      )
+
+    %{state | auto_pipeline_timer: {timer, token}}
+  end
+
+  defp ensure_auto_pipeline_timer(state), do: state
+
+  defp flush_auto_pipeline(%{auto_pipeline_size: 0} = state, _reason), do: {:ok, state}
+
+  defp flush_auto_pipeline(state, reason) do
+    batch = Enum.reverse(state.auto_pipeline_batch)
+    commands = Enum.map(batch, fn {_from, args, _ctx, _telemetry} -> args end)
+    data = encode_pipeline(state.protocol, commands)
+
+    case send_data(state, data) do
+      :ok ->
+        callers =
+          Enum.reduce(batch, state.callers, fn {from, args, ctx, telemetry}, callers ->
+            :queue.in({from, :single, {args, ctx, telemetry}}, callers)
+          end)
+
+        telemetry_auto_pipeline_flush(state, length(batch), reason)
+        {:ok, %{reset_auto_pipeline(state) | callers: callers}}
+
+      {:error, send_reason} ->
+        {:error, send_reason, state}
+    end
+  end
+
+  defp reset_auto_pipeline(%{auto_pipeline_timer: nil} = state) do
+    %{state | auto_pipeline_batch: [], auto_pipeline_size: 0}
+  end
+
+  defp reset_auto_pipeline(%{auto_pipeline_timer: {timer, _token}} = state) do
+    Process.cancel_timer(timer)
+
+    %{
+      state
+      | auto_pipeline_batch: [],
+        auto_pipeline_size: 0,
+        auto_pipeline_timer: nil
+    }
+  end
+
+  defp fail_auto_pipeline(%{auto_pipeline_size: 0} = state, _reason),
+    do: reset_auto_pipeline(state)
+
+  defp fail_auto_pipeline(state, reason) do
+    error = {:error, %Redis.ConnectionError{reason: reason}}
+
+    state.auto_pipeline_batch
+    |> Enum.reverse()
+    |> Enum.each(fn {from, _args, _ctx, telemetry} ->
+      telemetry_exception(telemetry, reason)
+      GenServer.reply(from, error)
+    end)
+
+    reset_auto_pipeline(state)
+  end
+
+  defp handle_auto_pipeline_error(state, reason) do
+    state = fail_auto_pipeline(state, reason)
+    state = fail_pending_callers(state, reason)
+    telemetry_disconnect(state, reason)
+    state = handle_disconnect(state)
+
+    if state.exit_on_disconnection do
+      {:stop, {:connection_error, reason}, state}
+    else
+      {:noreply, schedule_reconnect(state)}
+    end
+  end
+
+  # -------------------------------------------------------------------
   # Reconnection
   # -------------------------------------------------------------------
 
@@ -960,6 +1124,7 @@ defmodule Redis.Connection do
 
   defp send_error_reply(state, reason) do
     error = {:error, %Redis.ConnectionError{reason: reason}}
+    state = fail_auto_pipeline(state, reason)
     state = fail_pending_callers(state, reason)
     telemetry_disconnect(state, reason)
     state = handle_disconnect(state)
@@ -1055,6 +1220,34 @@ defmodule Redis.Connection do
       %{},
       Map.put(connection_metadata(state), :reason, reason)
     )
+  end
+
+  defp telemetry_auto_pipeline_flush(state, batch_size, reason) do
+    Redis.Telemetry.execute(
+      [:redis_ex, :auto_pipeline, :flush],
+      %{batch_size: batch_size},
+      connection_metadata(state) |> Map.put(:reason, reason)
+    )
+  end
+
+  defp validate_auto_pipeline_options(opts) do
+    auto_pipeline = Keyword.get(opts, :auto_pipeline, false)
+    window = Keyword.get(opts, :auto_pipeline_window, 1)
+    max_size = Keyword.get(opts, :auto_pipeline_max_size, 1_000)
+
+    cond do
+      not is_boolean(auto_pipeline) ->
+        {:error, {:invalid_auto_pipeline, auto_pipeline}}
+
+      not is_integer(window) or window < 0 ->
+        {:error, {:invalid_auto_pipeline_window, window}}
+
+      not is_integer(max_size) or max_size <= 0 ->
+        {:error, {:invalid_auto_pipeline_max_size, max_size}}
+
+      true ->
+        :ok
+    end
   end
 
   defp connection_metadata(state) do

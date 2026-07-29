@@ -24,6 +24,10 @@ defmodule Redis.Telemetry do
       * Measurements: `%{duration: native_time}`
       * Metadata: `%{commands: commands, kind: kind, reason: reason}`
 
+    * `[:redis_ex, :auto_pipeline, :flush]` - an automatic batch was sent
+      * Measurements: `%{batch_size: count}`
+      * Metadata: `%{host: host, port: port, reason: reason}`
+
   ## Usage
 
   Attach a handler:
