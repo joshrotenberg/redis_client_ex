@@ -10,6 +10,7 @@ defmodule Redis do
     * `Redis.Cluster` - cluster-aware client with slot routing
     * `Redis.Sentinel` - sentinel-aware client with failover
     * `Redis.PubSub` - pub/sub subscriptions
+    * `Redis.Monitor` - structured real-time command monitoring
     * `Redis.PhoenixPubSub` - Phoenix.PubSub adapter
     * `Redis.Cache` - client-side caching with ETS
     * `Redis.Consumer` - streams consumer group GenServer

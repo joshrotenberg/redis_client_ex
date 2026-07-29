@@ -185,6 +185,24 @@ receive do
 end
 ```
 
+## Command Monitoring
+
+`Redis.Monitor` uses a dedicated connection to stream structured command
+events. Subscribers are automatically removed when their process exits.
+
+```elixir
+{:ok, monitor} = Redis.Monitor.start_link(port: 6379)
+:ok = Redis.Monitor.subscribe(monitor, commands: ["SET", "DEL"])
+
+receive do
+  {:redis_monitor, %Redis.Monitor.Entry{} = entry} ->
+    IO.inspect(entry)
+end
+```
+
+Redis `MONITOR` exposes live traffic and carries a performance cost. Protect
+access to it and use it deliberately in production.
+
 ## Phoenix.PubSub Adapter
 
 Drop-in Redis adapter for Phoenix.PubSub. Enables cross-node broadcasting
@@ -373,6 +391,7 @@ Redis.Resilience.command(conn, ["GET", "key"])
 - **Cluster** with topology discovery, hash slot routing, MOVED/ASK redirects, cross-slot pipeline splitting, transaction validation
 - **Sentinel** with master resolution, role verification, proactive failover via `+switch-master`
 - **Pub/Sub** with pattern subscriptions, sharded pub/sub (Redis 7+)
+- **Structured command monitoring** with subscriber filters and cleanup
 - **Phoenix.PubSub adapter** for cross-node broadcasting (optional dep)
 - **Streams Consumer** with consumer groups, auto-ack, and pending message recovery
 - **WATCH transactions** with automatic retry on conflict
