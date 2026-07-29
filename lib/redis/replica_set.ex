@@ -46,12 +46,16 @@ defmodule Redis.ReplicaSet do
   Normal `Redis.Connection` options such as authentication, TLS, protocol,
   database, credential provider, and timeout are shared by all nodes. A node
   expressed as a keyword list or URI may override shared options.
+
+  Command, pipeline, and transaction calls accept `response: :typed`; see
+  `Redis.Response`.
   """
 
   use GenServer
 
   alias Redis.Connection
   alias Redis.ReplicaSet.{CommandMetadata, Topology}
+  alias Redis.Response
 
   require Logger
 
@@ -114,21 +118,27 @@ defmodule Redis.ReplicaSet do
   @doc "Routes a command according to its mutability and the configured read preference."
   @spec command(GenServer.server(), [term()], keyword()) :: {:ok, term()} | {:error, term()}
   def command(replica_set, arguments, opts \\ []) do
-    GenServer.call(replica_set, {:command, arguments}, call_timeout(opts))
+    replica_set
+    |> GenServer.call({:command, arguments}, call_timeout(opts))
+    |> Response.decode(arguments, opts)
   end
 
   @doc "Routes an all-read pipeline to a replica and every other pipeline to the primary."
   @spec pipeline(GenServer.server(), [[term()]], keyword()) ::
           {:ok, [term()]} | {:error, term()}
   def pipeline(replica_set, commands, opts \\ []) do
-    GenServer.call(replica_set, {:pipeline, commands}, call_timeout(opts))
+    replica_set
+    |> GenServer.call({:pipeline, commands}, call_timeout(opts))
+    |> Response.decode_many(commands, opts)
   end
 
   @doc "Executes a transaction on the primary."
   @spec transaction(GenServer.server(), [[term()]], keyword()) ::
           {:ok, [term()]} | {:error, term()}
   def transaction(replica_set, commands, opts \\ []) do
-    GenServer.call(replica_set, {:transaction, commands}, call_timeout(opts))
+    replica_set
+    |> GenServer.call({:transaction, commands}, call_timeout(opts))
+    |> Response.decode_many(commands, opts)
   end
 
   @doc "Replaces the primary and replica addresses without restarting the router."

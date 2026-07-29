@@ -22,12 +22,15 @@ defmodule Redis.Cluster do
     * `:name` - GenServer name registration
     * `:timeout` - command timeout ms (default: 5_000)
     * `:max_redirects` - max MOVED/ASK redirects before failing (default: 5)
+
+  Command, pipeline, and transaction calls accept `response: :typed`; see
+  `Redis.Response`.
   """
 
   use GenServer
 
   alias Redis.Cluster.{Router, Topology}
-  alias Redis.Connection
+  alias Redis.{Connection, Response}
 
   require Logger
 
@@ -57,7 +60,10 @@ defmodule Redis.Cluster do
           {:ok, term()} | {:error, term()}
   def command(cluster, args, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 10_000)
-    GenServer.call(cluster, {:command, args}, timeout)
+
+    cluster
+    |> GenServer.call({:command, args}, timeout)
+    |> Response.decode(args, opts)
   end
 
   @doc """
@@ -70,7 +76,10 @@ defmodule Redis.Cluster do
           {:ok, [term()]} | {:error, term()}
   def pipeline(cluster, commands, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 10_000)
-    GenServer.call(cluster, {:pipeline, commands}, timeout)
+
+    cluster
+    |> GenServer.call({:pipeline, commands}, timeout)
+    |> Response.decode_many(commands, opts)
   end
 
   @doc """
@@ -89,7 +98,10 @@ defmodule Redis.Cluster do
           {:ok, [term()]} | {:error, term()}
   def transaction(cluster, commands, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 10_000)
-    GenServer.call(cluster, {:transaction, commands}, timeout)
+
+    cluster
+    |> GenServer.call({:transaction, commands}, timeout)
+    |> Response.decode_many(commands, opts)
   end
 
   @doc """

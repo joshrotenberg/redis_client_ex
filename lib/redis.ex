@@ -12,6 +12,7 @@ defmodule Redis do
     * `Redis.Sentinel` - sentinel-aware client with failover
     * `Redis.PubSub` - pub/sub subscriptions
     * `Redis.Monitor` - structured real-time command monitoring
+    * `Redis.Response` - opt-in typed command responses
     * `Redis.PhoenixPubSub` - Phoenix.PubSub adapter
     * `Redis.Cache` - client-side caching with ETS
     * `Redis.Consumer` - streams consumer group GenServer
@@ -35,6 +36,14 @@ defmodule Redis do
         ["SET", "b", "2"],
         ["MGET", "a", "b"]
       ])
+
+  ## Typed Responses
+
+      {:ok, user} =
+        Redis.command(conn, ["HGETALL", "user:1"], response: :typed)
+
+      {:ok, entries} =
+        Redis.command_typed(conn, ["XRANGE", "events", "-", "+"])
 
   ## Transactions
 
@@ -68,6 +77,11 @@ defmodule Redis do
   @spec command(conn(), [String.t()], keyword()) :: {:ok, term()} | {:error, term()}
   def command(conn, args, opts \\ []), do: Connection.command(conn, args, opts)
 
+  @doc "Sends a single command with typed response parsing."
+  @spec command_typed(conn(), [String.t()], keyword()) :: {:ok, term()} | {:error, term()}
+  def command_typed(conn, args, opts \\ []),
+    do: Connection.command(conn, args, Keyword.put(opts, :response, :typed))
+
   @doc "Sends a single command, raises on error."
   @spec command!(conn(), [String.t()], keyword()) :: term()
   def command!(conn, args, opts \\ []) do
@@ -81,9 +95,21 @@ defmodule Redis do
   @spec pipeline(conn(), [[String.t()]], keyword()) :: {:ok, [term()]} | {:error, term()}
   def pipeline(conn, commands, opts \\ []), do: Connection.pipeline(conn, commands, opts)
 
+  @doc "Sends multiple commands with typed response parsing."
+  @spec pipeline_typed(conn(), [[String.t()]], keyword()) ::
+          {:ok, [term()]} | {:error, term()}
+  def pipeline_typed(conn, commands, opts \\ []),
+    do: Connection.pipeline(conn, commands, Keyword.put(opts, :response, :typed))
+
   @doc "Executes commands in a MULTI/EXEC transaction."
   @spec transaction(conn(), [[String.t()]], keyword()) :: {:ok, [term()]} | {:error, term()}
   def transaction(conn, commands, opts \\ []), do: Connection.transaction(conn, commands, opts)
+
+  @doc "Executes commands in a MULTI/EXEC transaction with typed response parsing."
+  @spec transaction_typed(conn(), [[String.t()]], keyword()) ::
+          {:ok, [term()]} | {:error, term()}
+  def transaction_typed(conn, commands, opts \\ []),
+    do: Connection.transaction(conn, commands, Keyword.put(opts, :response, :typed))
 
   @doc """
   Executes a WATCH-based optimistic locking transaction.

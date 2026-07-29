@@ -31,6 +31,10 @@ defmodule Redis.Connection do
     * `:hibernate_after` - idle ms before hibernation (default: nil)
     * `:hooks` - list of `Redis.Hook` modules for command middleware (default: [])
 
+  Command, pipeline, and transaction calls also accept `response: :typed` to
+  opt into the structured values documented by `Redis.Response`. Raw RESP
+  values remain the default.
+
   A Redis URI string may be passed as the first (sole) argument:
 
       Connection.start_link("redis://:secret@localhost:6380/2")
@@ -39,6 +43,7 @@ defmodule Redis.Connection do
   use GenServer
 
   alias Redis.Protocol.{RESP2, RESP3}
+  alias Redis.Response
 
   require Logger
 
@@ -114,7 +119,10 @@ defmodule Redis.Connection do
           {:ok, term()} | {:error, term()}
   def command(conn, args, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
-    GenServer.call(conn, {:command, args}, timeout)
+
+    conn
+    |> GenServer.call({:command, args}, timeout)
+    |> Response.decode(args, opts)
   end
 
   @impl Redis.Connection.Behaviour
@@ -122,7 +130,10 @@ defmodule Redis.Connection do
           {:ok, [term()]} | {:error, term()}
   def pipeline(conn, commands, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
-    GenServer.call(conn, {:pipeline, commands}, timeout)
+
+    conn
+    |> GenServer.call({:pipeline, commands}, timeout)
+    |> Response.decode_many(commands, opts)
   end
 
   @impl Redis.Connection.Behaviour
@@ -130,7 +141,10 @@ defmodule Redis.Connection do
           {:ok, [term()]} | {:error, term()}
   def transaction(conn, commands, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 5_000)
-    GenServer.call(conn, {:transaction, commands}, timeout)
+
+    conn
+    |> GenServer.call({:transaction, commands}, timeout)
+    |> Response.decode_many(commands, opts)
   end
 
   @doc """
@@ -191,7 +205,7 @@ defmodule Redis.Connection do
           do_watch_transaction(conn, keys, fun, opts, retries_left - 1)
 
         other ->
-          other
+          Response.decode_many(other, commands, opts)
       end
     else
       {:abort, reason} ->

@@ -39,6 +39,11 @@ defmodule Redis.Protocol.CoerceTest do
       assert Coerce.coerce(nil, "GET") == nil
     end
 
+    test "stream entry lists are not mistaken for flat maps" do
+      entries = [["1-0", ["field", "value"]]]
+      assert Coerce.coerce(entries, "XRANGE") == entries
+    end
+
     test "non-list result passes through even for map commands" do
       assert Coerce.coerce(nil, "HGETALL") == nil
       assert Coerce.coerce("OK", "SMEMBERS") == "OK"
