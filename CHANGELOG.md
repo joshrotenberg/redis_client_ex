@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.8.0](https://github.com/joshrotenberg/redis_client_ex/compare/v0.7.1...v0.8.0) (2026-07-29)
+
+
+### Features
+
+* add opt-in command auto-pipelining ([227d84f](https://github.com/joshrotenberg/redis_client_ex/commit/227d84f0a2668afe0ebdec000e9b78fa84b8be74))
+* add opt-in typed Redis responses ([750b7b3](https://github.com/joshrotenberg/redis_client_ex/commit/750b7b398c63aca7a881abefff6a3a7ef93142ce))
+* add primary/replica read routing ([5558427](https://github.com/joshrotenberg/redis_client_ex/commit/5558427be2fd667ff7add690572f89472ba172a5))
+* add Redis MONITOR streaming API ([0599959](https://github.com/joshrotenberg/redis_client_ex/commit/059995938c5188d0a322b9df112eb293eb1d0aaf))
+
+
+### Bug Fixes
+
+* correct package installation and metadata for downstream consumers ([ef524fa](https://github.com/joshrotenberg/redis_client_ex/commit/ef524faa7bced55c143a544370e806b261ca4287))
+* document protocol-native Redis Streams response shapes ([ef524fa](https://github.com/joshrotenberg/redis_client_ex/commit/ef524faa7bced55c143a544370e806b261ca4287))
+* eliminate Elixir 1.20 compilation warnings ([ef524fa](https://github.com/joshrotenberg/redis_client_ex/commit/ef524faa7bced55c143a544370e806b261ca4287))
+* harden client correctness and downstream integration ([ef524fa](https://github.com/joshrotenberg/redis_client_ex/commit/ef524faa7bced55c143a544370e806b261ca4287))
+* route option-bearing stream commands to the correct cluster slot ([ef524fa](https://github.com/joshrotenberg/redis_client_ex/commit/ef524faa7bced55c143a544370e806b261ca4287))
+
+
+### Miscellaneous Chores
+
+* prepare 0.8.0 release ([#137](https://github.com/joshrotenberg/redis_client_ex/issues/137)) ([2a98c3c](https://github.com/joshrotenberg/redis_client_ex/commit/2a98c3c985529ede308ec1458e7062ab5a073e06))
+
 ## [0.7.1](https://github.com/joshrotenberg/redis_client_ex/compare/v0.7.0...v0.7.1) (2026-04-08)
 
 
