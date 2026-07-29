@@ -81,7 +81,7 @@ Tests are organized by category:
 test/
   unit/               # No Redis needed
     protocol/         # RESP2, RESP3, property tests, coerce
-    commands/         # All 21 command builder tests (pure functions)
+    commands/         # All 23 command builder modules (pure functions)
     uri_test.exs      # URI parsing
     router_test.exs   # Cluster slot routing
     redis_test.exs    # Top-level Redis module API
@@ -118,7 +118,7 @@ lib/redis/
   pubsub/         # Pub/sub, sharded pub/sub
   cache/          # Client-side caching with ETS
   resilience/     # Circuit breaker, retry, bulkhead, coalesce
-  commands/       # 21 command builder modules (pure functions)
+  commands/       # 23 command builder modules (pure functions)
   consumer.ex     # Streams consumer group GenServer
   json.ex         # High-level JSON document API
   search.ex       # High-level search API

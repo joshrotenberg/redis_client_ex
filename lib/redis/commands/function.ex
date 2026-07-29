@@ -38,8 +38,9 @@ defmodule Redis.Commands.Function do
   @doc """
   FCALL_RO -- invoke a read-only Redis Function by name.
 
-  Identical to `fcall/3` but uses the read-only variant, which is safe
-  for use on replicas.
+  Identical to `fcall/3` but uses the read-only variant. The target function
+  must be registered with Redis' `no-writes` flag before it can run on a
+  read-only replica.
   """
   @spec fcall_ro(String.t(), [String.t()], [String.t()]) :: [String.t()]
   def fcall_ro(function, keys \\ [], args \\ []) do

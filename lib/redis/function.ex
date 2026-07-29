@@ -21,9 +21,6 @@ defmodule Redis.Function do
       # Call the function
       {:ok, result} = Redis.Function.call(conn, "myfunc", keys: ["mykey"])
 
-      # Read-only variant (safe on replicas)
-      {:ok, result} = Redis.Function.call_ro(conn, "myfunc", keys: ["mykey"])
-
       # List loaded libraries
       {:ok, libs} = Redis.Function.list(conn)
 
@@ -95,7 +92,8 @@ defmodule Redis.Function do
   @doc """
   Calls a function by name via FCALL_RO (read-only variant).
 
-  Safe for use on replicas. Accepts the same options as `call/3`.
+  Accepts the same options as `call/3`. The target function must be registered
+  with Redis' `no-writes` flag. Such functions can run on read-only replicas.
   """
   @spec call_ro(GenServer.server(), String.t(), keyword()) :: {:ok, term()} | {:error, term()}
   def call_ro(conn, function_name, opts \\ []) do

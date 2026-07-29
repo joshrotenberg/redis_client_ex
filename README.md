@@ -2,12 +2,20 @@
 
 [![CI](https://github.com/joshrotenberg/redis_client_ex/actions/workflows/ci.yml/badge.svg)](https://github.com/joshrotenberg/redis_client_ex/actions/workflows/ci.yml)
 [![Hex.pm](https://img.shields.io/hexpm/v/redis_client_ex.svg)](https://hex.pm/packages/redis_client_ex)
-[![Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/redis_client_ex)
+[![Guide](https://img.shields.io/badge/docs-guide-blue.svg)](https://redis-client-ex.hexdocs.pm/readme.html)
+[![API](https://img.shields.io/badge/docs-API_reference-blue.svg)](https://redis-client-ex.hexdocs.pm/api-reference.html)
 [![License](https://img.shields.io/hexpm/l/redis_client_ex.svg)](https://github.com/joshrotenberg/redis_client_ex/blob/main/LICENSE)
 
 Modern, full-featured Redis client for Elixir built on OTP.
 
 RESP3 native. Cluster-aware. Client-side caching. Resilience built in. Zero required dependencies.
+
+## Documentation
+
+Start with the **[complete guide](https://redis-client-ex.hexdocs.pm/readme.html)**
+for installation, topology selection, and end-to-end examples. Use the
+**[API reference](https://redis-client-ex.hexdocs.pm/api-reference.html)** for
+module and function details.
 
 ## Installation
 
@@ -24,6 +32,32 @@ end
 The dependency and OTP application are named `:redis`; `hex: :redis_client_ex`
 points Mix at the differently named Hex package. All modules use the `Redis`
 namespace.
+
+The core client has no required dependencies. Add only the optional packages
+needed by the features you use:
+
+| Feature | Add to your application |
+|---|---|
+| JSON documents, JSON codec, or JSON-backed search | `{:jason, "~> 1.4"}` |
+| Resilience wrapper | `{:ex_resilience, "~> 0.4"}` |
+| Phoenix.PubSub adapter | `{:phoenix_pubsub, "~> 2.1"}` |
+| Plug session store | `{:plug, "~> 1.14"}` |
+| Telemetry events | `{:telemetry, "~> 1.0"}` |
+| OpenTelemetry spans | `:telemetry`, `:opentelemetry_api`, and your SDK/exporter |
+
+## Server Compatibility
+
+The client negotiates RESP3 by default and falls back to RESP2 when necessary.
+Feature-specific APIs still require server support:
+
+| Capability | Server requirement |
+|---|---|
+| Redis Functions and sharded Pub/Sub | Redis 7+ |
+| Vector Sets | Redis 8.0+ |
+| JSON and Search | Redis 8 or Redis Stack with the relevant modules |
+
+Command builders do not perform server-version checks. Redis returns an error
+when a command is unavailable on the connected server.
 
 ## Connecting
 
@@ -51,6 +85,22 @@ namespace.
 
 For backwards compatibility, `ssl: true` without `ssl_opts` uses
 `verify: :verify_none`. Configure peer verification for production connections.
+
+## Choosing a Client
+
+| Deployment or workload | Start with |
+|---|---|
+| One Redis endpoint | `Redis` or `Redis.Connection` |
+| Several independent connections | `Redis.Connection.Pool` |
+| Manually managed primary and replicas | `Redis.ReplicaSet` |
+| Sentinel discovery and failover | `Redis.Sentinel` |
+| Redis Cluster | `Redis.Cluster` |
+| Regular or pattern subscriptions | `Redis.PubSub` |
+| Cluster sharded Pub/Sub | `Redis.PubSub.Sharded` |
+| Live command inspection | `Redis.Monitor` |
+
+All command-oriented clients accept the same command-list format. Topology
+clients add the routing and failover semantics described in their module docs.
 
 ## Supervision
 
@@ -180,7 +230,18 @@ Search.create("idx:users", :json,
 )
 ```
 
-21 command modules are available: `String`, `Hash`, `List`, `Set`, `SortedSet`, `Stream`, `Key`, `Server`, `JSON`, `Search`, `Script`, `Geo`, `Bitmap`, `HyperLogLog`, `Bloom`, `Cuckoo`, `TopK`, `CMS`, `TDigest`, `TimeSeries`, and `PubSub`. See the [docs](https://hexdocs.pm/redis_client_ex) for full coverage.
+Hundreds of command builders are organized across 23 modules:
+`Redis.Commands.String`, `Redis.Commands.Hash`, `Redis.Commands.List`,
+`Redis.Commands.Set`, `Redis.Commands.SortedSet`, `Redis.Commands.Stream`,
+`Redis.Commands.Key`, `Redis.Commands.Server`, `Redis.Commands.JSON`,
+`Redis.Commands.Search`, `Redis.Commands.Script`, `Redis.Commands.Function`,
+`Redis.Commands.VectorSet`, `Redis.Commands.Geo`, `Redis.Commands.Bitmap`,
+`Redis.Commands.HyperLogLog`, `Redis.Commands.Bloom`,
+`Redis.Commands.Cuckoo`, `Redis.Commands.TopK`, `Redis.Commands.CMS`,
+`Redis.Commands.TDigest`, `Redis.Commands.TimeSeries`, and
+`Redis.Commands.PubSub`. See the
+[API reference](https://redis-client-ex.hexdocs.pm/api-reference.html) for full
+coverage.
 
 ## Cluster
 
@@ -412,6 +473,41 @@ Filters compile to RediSearch query syntax automatically:
 Numeric strings are auto-coerced to integers/floats by default.
 For raw RediSearch access, see `Redis.Commands.Search`.
 
+## Redis Functions
+
+Redis 7+ functions are persistent, named server-side routines. Load a library
+once, then invoke its functions by name:
+
+```elixir
+library = """
+#!lua name=my_library
+redis.register_function('read_value', function(keys, args)
+  return redis.call('GET', keys[1])
+end)
+"""
+
+:ok = Redis.Function.load(conn, library)
+{:ok, value} = Redis.Function.call(conn, "read_value", keys: ["mykey"])
+```
+
+Use `Redis.Function.call_ro/3` only for functions registered as read-only.
+For ad-hoc Lua scripts with automatic `EVALSHA` fallback, use `Redis.Script`.
+
+## Vector Sets
+
+Redis 8.0+ Vector Sets provide native similarity search:
+
+```elixir
+{:ok, 1} =
+  Redis.VectorSet.vadd(conn, "movies", "matrix", [0.1, 0.8, 0.3])
+
+{:ok, results} =
+  Redis.VectorSet.search(conn, "movies", [0.1, 0.8, 0.3], count: 5)
+```
+
+Attributes, filtered searches, graph links, and raw `V*` command builders are
+available through `Redis.VectorSet` and `Redis.Commands.VectorSet`.
+
 ## Session Store
 
 Drop-in Plug session store backed by Redis with configurable TTL.
@@ -437,7 +533,7 @@ Redis.Cache.command(cache, ["SET", "key", "value"])
 # Cache miss -- fetches from Redis
 {:ok, "value"} = Redis.Cache.get(cache, "key")
 
-# Cache hit -- served from ETS, 197x faster than network
+# Cache hit -- served locally from ETS
 {:ok, "value"} = Redis.Cache.get(cache, "key")
 
 # When another client modifies "key", Redis pushes invalidation
@@ -459,9 +555,22 @@ Redis.Cache.command(cache, ["SET", "key", "value"])
 Redis.Resilience.command(conn, ["GET", "key"])
 ```
 
+## Operational and Extension APIs
+
+| Need | API |
+|---|---|
+| Rotating cloud credentials | `Redis.CredentialProvider` |
+| Custom serialization | `Redis.Codec` |
+| Command middleware | `Redis.Hook` |
+| Telemetry events | `Redis.Telemetry` |
+| OpenTelemetry spans | `Redis.OpenTelemetry` |
+| Cluster-wide key scanning | `Redis.Cluster.Scan` |
+| Lua script caching and fallback | `Redis.Script` |
+
 ## Features
 
 - **RESP3 native** with RESP2 fallback for older servers
+- **TCP, TLS, Unix sockets, and Redis URIs** with ACL and rotating credentials
 - **Cluster** with topology discovery, hash slot routing, MOVED/ASK redirects, cross-slot pipeline splitting, transaction validation
 - **Sentinel** with master resolution, role verification, proactive failover via `+switch-master`
 - **Primary/replica routing** with Sentinel and INFO topology discovery
@@ -471,15 +580,18 @@ Redis.Resilience.command(conn, ["GET", "key"])
 - **Streams Consumer** with consumer groups, auto-ack, and pending message recovery
 - **WATCH transactions** with automatic retry on conflict
 - **Auto-pipelining** for concurrent callers, with per-connection batching
+- **Typed responses** for protocol-independent hashes, sets, server records, and streams
 - **JSON documents** with map-based CRUD, nested paths, atomic operations (Redis Stack)
 - **Search** with Elixir filter expressions, auto-coercion, parsed results (Redis Stack)
+- **Redis Functions** and **Vector Sets** through high-level APIs and command builders
 - **Plug session store** with configurable TTL
 - **Client-side caching** via RESP3 server-assisted invalidation + ETS
 - **Connection pool** with round-robin/random dispatch
 - **Resilience** patterns: circuit breaker, retry with backoff, request coalescing, bulkhead
-- **356 command builders** across 21 modules
+- **Hundreds of command builders** across 23 modules
+- **Custom codecs and command hooks** for application-specific extensions
 - **Lua scripting** with automatic EVALSHA/EVAL fallback
-- **Telemetry** events for connection lifecycle and command pipeline
+- **Telemetry and OpenTelemetry** integrations for connection and command activity
 
 ## License
 

@@ -3,6 +3,8 @@ defmodule Redis.MixProject do
 
   @version "0.8.0"
   @source_url "https://github.com/joshrotenberg/redis_client_ex"
+  @docs_url "https://redis-client-ex.hexdocs.pm"
+  @guide_url "#{@docs_url}/readme.html"
 
   def project do
     [
@@ -69,10 +71,63 @@ defmodule Redis.MixProject do
 
   defp docs do
     [
-      main: "Redis",
+      main: "readme",
       source_ref: "v#{@version}",
       source_url: @source_url,
-      extras: ["README.md"]
+      extras: ["README.md", "CHANGELOG.md"],
+      groups_for_extras: [
+        Guides: ["README.md"],
+        "Release notes": ["CHANGELOG.md"]
+      ],
+      groups_for_modules: [
+        "Clients and topologies": [
+          Redis,
+          Redis.Connection,
+          Redis.Connection.Pool,
+          Redis.ReplicaSet,
+          Redis.Sentinel,
+          Redis.Cluster,
+          Redis.URI
+        ],
+        "Messaging and streams": [
+          Redis.PubSub,
+          Redis.PubSub.Sharded,
+          Redis.PhoenixPubSub,
+          Redis.Consumer,
+          Redis.Consumer.Handler,
+          Redis.Monitor,
+          Redis.Monitor.Entry
+        ],
+        "Data and server APIs": [
+          Redis.Cache,
+          Redis.Cache.Allowlist,
+          Redis.Cache.Backend,
+          Redis.Cache.Store,
+          Redis.JSON,
+          Redis.Search,
+          Redis.Search.Result,
+          Redis.VectorSet,
+          Redis.Function,
+          Redis.Script,
+          Redis.PlugSession,
+          Redis.Resilience
+        ],
+        "Observability and extension points": [
+          Redis.CredentialProvider,
+          Redis.CredentialProvider.Static,
+          Redis.Codec,
+          Redis.Codec.JSON,
+          Redis.Codec.Raw,
+          Redis.Codec.Term,
+          Redis.Hook,
+          Redis.Telemetry,
+          Redis.OpenTelemetry
+        ],
+        "Responses and errors": ~r/^Redis\.(Response|Error|ConnectionError|ResponseError)/,
+        "Command builders": ~r/^Redis\.Commands\./,
+        "Protocols and lower-level APIs":
+          ~r/^Redis\.(Connection\.Behaviour|Cluster\.(Router|Scan|Topology)|Protocol\.|Sentinel\.Monitor|Resilience\.ErrorClassifier)/
+      ]
     ]
   end
 
@@ -80,8 +135,12 @@ defmodule Redis.MixProject do
     [
       name: "redis_client_ex",
       licenses: ["MIT"],
-      links: %{"GitHub" => @source_url},
-      files: ~w(lib mix.exs README.md LICENSE .formatter.exs),
+      links: %{
+        "Guide" => @guide_url,
+        "API Reference" => "#{@docs_url}/api-reference.html",
+        "GitHub" => @source_url
+      },
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE .formatter.exs),
       maintainers: ["Josh Rotenberg"]
     ]
   end
